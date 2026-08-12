@@ -7,73 +7,39 @@
 
 declare(strict_types=1);
 
-// ── Config ─────────────────────────────────────────────────────────────────
-
-/**
- * The config lives above the web root. From public_html/api/lib/ that is three
- * levels up. A local checkout falls back to server/config.php so the API can
- * be run with `php -S` during development.
+/*
+ * ORDER MATTERS HERE.
+ *
+ * The error handlers are installed BEFORE the config is loaded. They used to
+ * come after, which meant a missing or unreadable config file threw an
+ * uncaught exception and the server returned a blank 500 with no clue what
+ * was wrong — the single most likely thing to go wrong on a fresh deploy, and
+ * the one failure that told you nothing.
  */
-function eaton_load_config(): array
-{
-    $candidates = [
-        dirname(__DIR__, 4) . '/eaton-config.php',  // /home/user/eaton-config.php
-        dirname(__DIR__, 3) . '/eaton-config.php',  // one level up from public_html
-        dirname(__DIR__, 2) . '/config.php',        // server/config.php (local dev)
-    ];
-
-    foreach ($candidates as $path) {
-        if (is_readable($path)) {
-            $config = require $path;
-            if (!is_array($config)) {
-                throw new RuntimeException("Config at {$path} did not return an array.");
-            }
-            return $config;
-        }
-    }
-
-    throw new RuntimeException(
-        'Config not found. Copy server/config.example.php to eaton-config.php ' .
-        'in your home directory (above public_html) and fill it in.'
-    );
-}
-
-$GLOBALS['eaton_config'] = eaton_load_config();
-
-function config(string $key, $default = null)
-{
-    // Dot path: config('db.host'), config('stripe.secret_key').
-    $value = $GLOBALS['eaton_config'];
-    foreach (explode('.', $key) as $segment) {
-        if (!is_array($value) || !array_key_exists($segment, $value)) {
-            return $default;
-        }
-        $value = $value[$segment];
-    }
-    return $value;
-}
-
-function is_production(): bool
-{
-    return config('env', 'production') !== 'development';
-}
 
 // ── Error handling ─────────────────────────────────────────────────────────
 
 // Errors are logged, never printed: a stray warning in the output stream
-// corrupts the JSON body and the front end sees a parse error instead of the
+// corrupts the JSON body, so the front end sees a parse error instead of the
 // real problem.
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 error_reporting(E_ALL);
 
-$errorLog = config('error_log');
-if ($errorLog) {
-    $dir = dirname($errorLog);
-    if (!is_dir($dir)) {
-        @mkdir($dir, 0755, true);
+/**
+ * Is this a development environment?
+ *
+ * Read defensively: this is called from the exception handler, which must
+ * work even when the config is the thing that failed to load.
+ */
+function is_production(): bool
+{
+    $config = $GLOBALS['eaton_config'] ?? null;
+    if (!is_array($config)) {
+        // No config means we cannot know — assume production and say little.
+        return true;
     }
-    ini_set('error_log', $errorLog);
+    return ($config['env'] ?? 'production') !== 'development';
 }
 
 // Turn warnings/notices into exceptions so a bad array key fails loudly in
@@ -100,14 +66,87 @@ set_exception_handler(static function (Throwable $e): void {
         header('Content-Type: application/json; charset=utf-8');
     }
 
+    // A setup fault — no config, no database — is not a customer's problem to
+    // read around, but it IS the operator's problem to diagnose. The code is
+    // machine-readable and safe; the detail only appears in development.
+    $isSetupFault = $e instanceof EatonSetupError;
+
     echo json_encode([
-        'error'   => 'server_error',
-        'message' => is_production()
-            ? 'Something went wrong. Please try again.'
-            : $e->getMessage(),
+        'error'   => $isSetupFault ? 'not_configured' : 'server_error',
+        'message' => $isSetupFault
+            ? 'The site is not finished being set up. See the server error log.'
+            : (is_production() ? 'Something went wrong. Please try again.' : $e->getMessage()),
+        'detail'  => is_production() ? null : $e->getMessage(),
     ]);
     exit;
 });
+
+/** Thrown when the server is misconfigured rather than merely broken. */
+class EatonSetupError extends RuntimeException {}
+
+// ── Config ─────────────────────────────────────────────────────────────────
+
+/**
+ * Find and load the configuration.
+ *
+ * It lives above the web root so that a server which stops executing PHP
+ * cannot serve the database password as plain text.
+ *
+ * From public_html/api/lib the home directory is three levels up. The fourth
+ * candidate is a deliberate over-reach for unusual layouts, and the local
+ * server/config.php lets the API run under `php -S` during development.
+ */
+function eaton_load_config(): array
+{
+    $candidates = [
+        dirname(__DIR__, 3) . '/eaton-config.php',  // /home/user/eaton-config.php
+        dirname(__DIR__, 4) . '/eaton-config.php',  // one level higher again
+        dirname(__DIR__, 2) . '/config.php',        // server/config.php (local dev)
+    ];
+
+    foreach ($candidates as $path) {
+        if (is_readable($path)) {
+            $config = require $path;
+            if (!is_array($config)) {
+                throw new EatonSetupError("Config at {$path} did not return an array.");
+            }
+            return $config;
+        }
+    }
+
+    throw new EatonSetupError(
+        'Config not found. Looked in: ' . implode(', ', $candidates) . '. ' .
+        'Copy server/config.example.php to eaton-config.php in the directory ' .
+        'that CONTAINS public_html, and fill it in.'
+    );
+}
+
+$GLOBALS['eaton_config'] = eaton_load_config();
+
+function config(string $key, $default = null)
+{
+    // Dot path: config('db.host'), config('stripe.secret_key').
+    $value = $GLOBALS['eaton_config'];
+    foreach (explode('.', $key) as $segment) {
+        if (!is_array($value) || !array_key_exists($segment, $value)) {
+            return $default;
+        }
+        $value = $value[$segment];
+    }
+    return $value;
+}
+
+// Now that the config is loaded, point the log where it asked. Until this
+// runs, errors go to the server's default log — which is where a config
+// failure will have been recorded.
+$errorLog = config('error_log');
+if ($errorLog) {
+    $dir = dirname($errorLog);
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0755, true);
+    }
+    ini_set('error_log', $errorLog);
+}
 
 // ── Database ───────────────────────────────────────────────────────────────
 
