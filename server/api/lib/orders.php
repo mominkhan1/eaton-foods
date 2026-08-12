@@ -476,7 +476,7 @@ function assert_postcode_served(string $postcode, array $setup): void
         return;
     }
 
-    // 'M14 5LJ' → 'M14'. Outward code is the letters plus digits before the
+    // 'AL8 6HA' → 'AL8'. Outward code is the letters plus digits before the
     // space (or before the final three characters if the space is missing).
     $normalised = strtoupper(preg_replace('/\s+/', '', $postcode) ?? '');
     if (strlen($normalised) < 5) {

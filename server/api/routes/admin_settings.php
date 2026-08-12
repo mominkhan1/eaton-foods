@@ -200,8 +200,8 @@ function admin_test_email(): void
         'address'   => [
             'line1'    => '1 Example Street',
             'line2'    => null,
-            'city'     => 'Manchester',
-            'postcode' => 'M14 5LJ',
+            'city'     => 'Welwyn Garden City',
+            'postcode' => 'AL8 6HA',
         ],
         'lines'     => [[
             'name'       => 'Holy Smash',

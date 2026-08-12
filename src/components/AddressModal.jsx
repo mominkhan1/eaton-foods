@@ -63,7 +63,7 @@ function AddressForm({ onClose }) {
             className="field uppercase"
             value={postcode}
             onChange={(event) => setPostcode(event.target.value)}
-            placeholder="M14 5LJ"
+            placeholder="AL8 6HA"
             autoComplete="postal-code"
           />
         </label>

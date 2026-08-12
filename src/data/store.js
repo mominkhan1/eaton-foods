@@ -16,18 +16,20 @@ export const storeConfig = {
   legalName: 'The Food Table Ltd',
   tagline: 'Good Food Good Mood',
   isHalal: true,
-  address: '312 Wilmslow Road, Rusholme, Manchester',
-  postcode: 'M14 5LJ',
-  city: 'Manchester',
+  address: 'The Howard Centre, Howardsgate, Welwyn Garden City',
+  postcode: 'AL8 6HA',
+  city: 'Welwyn Garden City',
   country: 'United Kingdom',
-  phoneDisplay: '+44 161 555 0142',
-  phone: '+441615550142',
-  email: 'orders@eatonfoods.co.uk',
+  // PLACEHOLDER — replace with the shop's real number before launch.
+  phoneDisplay: '01707 555142',
+  phone: '+441707555142',
+  email: 'orders@eaton.food',
   timeZone: 'Europe/London',
   currency: '£',
   currencyCode: 'GBP',
-  // Geofence centre — the shop itself.
-  location: { lat: 53.4506, lng: -2.2245 },
+  // Geofence centre — the shop itself. Approximate to the Howard Centre;
+  // worth confirming against a map pin before relying on the radius check.
+  location: { lat: 51.8014, lng: -0.2045 },
 };
 
 export const orderSetup = {
@@ -48,12 +50,14 @@ export const orderSetup = {
   // Delivery geofence. Radius-based, like the reference store.
   useRadiusBasedDeliveryArea: true,
   deliveryRadiusKm: 5,
-  // Manchester postal districts we actually drive to. A radius circle alone
-  // will spill into districts we don't serve, so the postcode is checked too.
-  servedPostcodeDistricts: [
-    'M1', 'M2', 'M3', 'M4', 'M8', 'M11', 'M12', 'M13', 'M14',
-    'M15', 'M16', 'M18', 'M19', 'M20', 'M21', 'M32',
-  ],
+  // Districts we actually drive to. A radius circle alone will spill into
+  // places we don't serve, so the postcode is checked too.
+  //
+  // These are the districts within roughly 5km of the Howard Centre:
+  // Welwyn Garden City itself (AL7/AL8), Welwyn and Digswell (AL6), and
+  // Hatfield (AL9/AL10). Widen or trim this to match what the drivers will
+  // actually do — it is a business decision, not a geographic one.
+  servedPostcodeDistricts: ['AL6', 'AL7', 'AL8', 'AL9', 'AL10'],
 
   // Delivery pricing.
   deliveryFee: 2.49,

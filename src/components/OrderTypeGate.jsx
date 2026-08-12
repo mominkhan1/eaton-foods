@@ -97,7 +97,8 @@ export default function OrderTypeGate() {
               <span className="flex-1">
                 <span className="block font-semibold text-ink-950">Delivery</span>
                 <span className="block text-sm text-ink-500">
-                  ~{orderSetup.deliveryTime} mins · {orderSetup.deliveryRadiusKm}km around Rusholme
+                  ~{orderSetup.deliveryTime} mins · {orderSetup.deliveryRadiusKm}km around Welwyn
+                  Garden City
                 </span>
               </span>
               <Chevron />
@@ -123,7 +124,7 @@ export default function OrderTypeGate() {
               className="field uppercase"
               value={postcode}
               onChange={(event) => setPostcode(event.target.value)}
-              placeholder="M14 5LJ"
+              placeholder="AL8 6HA"
               autoComplete="postal-code"
             />
           </label>

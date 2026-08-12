@@ -220,8 +220,8 @@ test('postcode normalisation and district extraction', () => {
   assert.equal(postcodeDistrict('SW1A 1AA'), 'SW1A');
 });
 
-test('a served Manchester postcode inside the radius passes', () => {
-  const result = checkDeliveryArea('M14 5LJ', storeConfig.location);
+test('a served local postcode inside the radius passes', () => {
+  const result = checkDeliveryArea('AL8 6HA', storeConfig.location);
   assert.equal(result.ok, true, `expected pass, got ${result.reason}`);
 });
 
@@ -230,8 +230,10 @@ test('a London postcode is rejected on district', () => {
 });
 
 test('a served district too far away is rejected on radius', () => {
+  // ~56km due north: the district is one we serve, so this isolates the
+  // radius check from the district check.
   const faraway = { lat: storeConfig.location.lat + 0.5, lng: storeConfig.location.lng };
-  const result = checkDeliveryArea('M20 2RN', faraway);
+  const result = checkDeliveryArea('AL10 8AB', faraway);
 
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'outside-radius');
@@ -243,9 +245,12 @@ test('garbage input is rejected as an invalid postcode', () => {
 });
 
 test('haversine distance is sane', () => {
-  const leeds = { lat: 53.8008, lng: -1.5491 };
-  const km = distanceKm(storeConfig.location, leeds);
-  assert.ok(km > 50 && km < 70, `expected ~60km, got ${km.toFixed(1)}km`);
+  // Charing Cross is a shade over 33km from the shop. A wide band, because
+  // this guards against the formula being wrong by an order of magnitude
+  // (degrees vs radians, wrong earth radius), not against small drift.
+  const londonCharingCross = { lat: 51.5074, lng: -0.1278 };
+  const km = distanceKm(storeConfig.location, londonCharingCross);
+  assert.ok(km > 28 && km < 40, `expected ~33km, got ${km.toFixed(1)}km`);
 });
 
 // ── Pricing ────────────────────────────────────────────────────────────────

@@ -1,9 +1,9 @@
 /**
  * Delivery-area checks.
  *
- * The reference store uses a radius-only geofence. A circle drawn around a
- * Manchester shop spills into districts we don't drive to, so this checks the
- * postcode district as well and reports which of the two tests failed.
+ * The reference store uses a radius-only geofence. A circle drawn around the
+ * shop spills into districts we don't drive to, so this checks the postcode
+ * district as well and reports which of the two tests failed.
  */
 
 import { storeConfig, orderSetup } from '../data/store.js';
@@ -36,7 +36,7 @@ export function normalisePostcode(raw) {
   return `${match[1]} ${match[2]}`;
 }
 
-/** The outward district, e.g. "M14 5LJ" → "M14". */
+/** The outward district, e.g. "AL8 6HA" → "AL8". */
 export function postcodeDistrict(raw) {
   const normalised = normalisePostcode(raw);
   if (!normalised) return null;
@@ -84,7 +84,7 @@ export function checkDeliveryArea(postcode, coords = null) {
 
 export const DELIVERY_AREA_MESSAGES = {
   'invalid-postcode': "That doesn't look like a full UK postcode.",
-  'outside-districts': "Sorry, we don't deliver to that part of Manchester yet — collection is still available.",
+  'outside-districts': "Sorry, we don't deliver to that area yet — collection is still available.",
   'outside-radius': `Sorry, that address is outside our ${orderSetup.deliveryRadiusKm}km delivery zone — collection is still available.`,
 };
 

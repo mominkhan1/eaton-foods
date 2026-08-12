@@ -190,7 +190,9 @@ export default function CartDrawer() {
             </button>
 
             <p className="mt-2 text-center text-xs text-ink-500">
-              {orderType === 'delivery' ? 'Delivering to your address' : 'Collection from Rusholme'}
+              {orderType === 'delivery'
+                ? 'Delivering to your address'
+                : 'Collection from the Howard Centre'}
             </p>
           </footer>
         )}

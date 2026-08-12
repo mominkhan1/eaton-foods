@@ -1,7 +1,8 @@
-# Eat On — Manchester
+# Eat On — Welwyn Garden City
 
-Online ordering for **Eat On** (The Food Table Ltd), Manchester. Halal.
-React + Vite + Tailwind v4.
+Online ordering for **Eat On** (The Food Table Ltd), The Howard Centre,
+Howardsgate, Welwyn Garden City AL8 6HA. Halal.
+React + Vite + Tailwind v4, with a PHP/MySQL backend.
 
 The menu in [src/data/menu.js](src/data/menu.js) is transcribed from the
 printed board: 7 categories, 18 items, 6 option groups. Run `npm run menu` to
@@ -214,8 +215,8 @@ timezone, so a customer ordering from abroad still sees the shop's real state.
 
 ### Delivery area
 
-The reference store uses a **radius-only** geofence. A 5km circle around
-Rusholme spills into districts that aren't worth driving to, so this checks the
+The reference store uses a **radius-only** geofence. A 5km circle around the
+shop spills into districts that aren't worth driving to, so this checks the
 **postcode district as well** and reports which of the two tests failed
 (`invalid-postcode`, `outside-districts`, `outside-radius`).
 

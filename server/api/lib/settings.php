@@ -50,17 +50,19 @@ function default_store_config(): array
         'legalName'    => 'The Food Table Ltd',
         'tagline'      => 'Good Food Good Mood',
         'isHalal'      => true,
-        'address'      => '312 Wilmslow Road, Rusholme, Manchester',
-        'postcode'     => 'M14 5LJ',
-        'city'         => 'Manchester',
+        'address'      => 'The Howard Centre, Howardsgate, Welwyn Garden City',
+        'postcode'     => 'AL8 6HA',
+        'city'         => 'Welwyn Garden City',
         'country'      => 'United Kingdom',
-        'phoneDisplay' => '+44 161 555 0142',
-        'phone'        => '+441615550142',
-        'email'        => 'orders@eatonfoods.co.uk',
+        // PLACEHOLDER — replace with the shop's real number before launch.
+        'phoneDisplay' => '01707 555142',
+        'phone'        => '+441707555142',
+        'email'        => 'orders@eaton.food',
         'timeZone'     => 'Europe/London',
         'currency'     => '£',
         'currencyCode' => 'GBP',
-        'location'     => ['lat' => 53.4506, 'lng' => -2.2245],
+        // Geofence centre, approximate to the Howard Centre.
+        'location'     => ['lat' => 51.8014, 'lng' => -0.2045],
     ];
 }
 
@@ -78,10 +80,9 @@ function default_order_setup(): array
         'scheduleMaxDaysAhead'        => 2,
         'useRadiusBasedDeliveryArea'  => true,
         'deliveryRadiusKm'            => 5,
-        'servedPostcodeDistricts'     => [
-            'M1', 'M2', 'M3', 'M4', 'M8', 'M11', 'M12', 'M13', 'M14',
-            'M15', 'M16', 'M18', 'M19', 'M20', 'M21', 'M32',
-        ],
+        // Roughly 5km around the Howard Centre: Welwyn Garden City (AL7/AL8),
+        // Welwyn and Digswell (AL6), Hatfield (AL9/AL10).
+        'servedPostcodeDistricts'     => ['AL6', 'AL7', 'AL8', 'AL9', 'AL10'],
         'deliveryFee'                 => 2.49,
         'isDeliveryFreeOver'          => true,
         'freeDeliveryThreshold'       => 25,
@@ -193,7 +194,7 @@ function get_hours(): array
  * Is the shop open right now?
  *
  * Evaluated in the shop's own time zone. A customer in another time zone must
- * still see the Manchester shop's hours, so this never uses the client clock.
+ * still see the shop's own opening hours, so this never uses the client clock.
  */
 function is_open_now(array $shifts, array $closedDates, string $manualStatus): bool
 {
