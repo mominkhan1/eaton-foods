@@ -47,9 +47,23 @@ export const orderSetup = {
   scheduleSlotMinutes: 15,
   scheduleMaxDaysAhead: 2,
 
-  // Delivery geofence. Radius-based, like the reference store.
-  useRadiusBasedDeliveryArea: true,
+  /*
+   * Delivery area is decided by postcode district alone.
+   *
+   * A radius was tried and abandoned: Hatfield (AL9/AL10) is served in full,
+   * and those districts reach well past any circle centred on the shop, so a
+   * radius test would refuse addresses the drivers happily go to. Districts
+   * are also how the shop actually thinks about its area.
+   *
+   * `deliveryRadiusKm` is kept only as a fallback for the stub geocoder and
+   * is not enforced while the flag below is false.
+   */
+  useRadiusBasedDeliveryArea: false,
   deliveryRadiusKm: 5,
+
+  // Shown to customers wherever the delivery area is described. Plain words,
+  // because "within 5km" means nothing to someone deciding whether to order.
+  deliveryAreaLabel: 'Welwyn Garden City, Welwyn and Hatfield',
   // Districts we actually drive to. A radius circle alone will spill into
   // places we don't serve, so the postcode is checked too.
   //

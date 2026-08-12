@@ -41,7 +41,7 @@ function AddressForm({ onClose }) {
     <Modal open onClose={onClose} title="Delivery address" size="sm">
       <form onSubmit={onSubmit} className="grid gap-3">
         <p className="text-sm text-ink-500">
-          We deliver within {orderSetup.deliveryRadiusKm}km of the shop. Minimum order £
+          We deliver across {orderSetup.deliveryAreaLabel}. Minimum order £
           {orderSetup.minimumDeliveryOrder.toFixed(2)}, free over £
           {orderSetup.freeDeliveryThreshold.toFixed(2)}.
         </p>

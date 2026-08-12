@@ -78,8 +78,13 @@ function default_order_setup(): array
         'isPreOrderingEnabled'        => true,
         'scheduleSlotMinutes'         => 15,
         'scheduleMaxDaysAhead'        => 2,
-        'useRadiusBasedDeliveryArea'  => true,
+        // Districts alone decide the delivery area. Hatfield is served in
+        // full and reaches past any circle centred on the shop, so a radius
+        // test would refuse addresses the drivers go to. The radius value is
+        // kept only as a fallback and is not enforced while this is false.
+        'useRadiusBasedDeliveryArea'  => false,
         'deliveryRadiusKm'            => 5,
+        'deliveryAreaLabel'           => 'Welwyn Garden City, Welwyn and Hatfield',
         // Roughly 5km around the Howard Centre: Welwyn Garden City (AL7/AL8),
         // Welwyn and Digswell (AL6), Hatfield (AL9/AL10).
         'servedPostcodeDistricts'     => ['AL6', 'AL7', 'AL8', 'AL9', 'AL10'],

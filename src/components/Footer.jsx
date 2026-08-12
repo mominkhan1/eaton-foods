@@ -47,7 +47,7 @@ export default function Footer() {
             Delivery
           </h3>
           <ul className="mt-3 grid gap-1.5 text-sm text-ink-500">
-            <li>Within {orderSetup.deliveryRadiusKm}km of Welwyn Garden City</li>
+            <li>{orderSetup.deliveryAreaLabel}</li>
             <li>Minimum order £{orderSetup.minimumDeliveryOrder.toFixed(2)}</li>
             <li>Free over £{orderSetup.freeDeliveryThreshold.toFixed(2)}</li>
             <li>Card payment only</li>

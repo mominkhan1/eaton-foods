@@ -229,14 +229,16 @@ test('a London postcode is rejected on district', () => {
   assert.equal(checkDeliveryArea('SW1A 1AA', storeConfig.location).reason, 'outside-districts');
 });
 
-test('a served district too far away is rejected on radius', () => {
-  // ~56km due north: the district is one we serve, so this isolates the
-  // radius check from the district check.
+test('a served district is accepted whatever the distance', () => {
+  // The shop delivers to all of Hatfield, and AL9/AL10 reach past any circle
+  // drawn around the shop, so the radius check is off and the district alone
+  // decides. This pins that policy: a served district must not be refused on
+  // distance, or half of Hatfield silently stops being able to order.
   const faraway = { lat: storeConfig.location.lat + 0.5, lng: storeConfig.location.lng };
   const result = checkDeliveryArea('AL10 8AB', faraway);
 
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'outside-radius');
+  assert.equal(orderSetup.useRadiusBasedDeliveryArea, false);
+  assert.equal(result.ok, true, `expected pass, got ${result.reason}`);
   assert.ok(result.distanceKm > orderSetup.deliveryRadiusKm);
 });
 
