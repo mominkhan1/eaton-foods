@@ -149,7 +149,18 @@ function admin_set_status(string $reference): void
         );
     });
 
-    json_response(present_order(find_order_by_reference($reference), true));
+    $updated = present_order(find_order_by_reference($reference), true);
+
+    // Tell the customer, for the states worth an email. Failures are logged
+    // and ignored — the kitchen's screen must update even if mail is down.
+    try {
+        require_once __DIR__ . '/../lib/mail.php';
+        send_status_update($updated, $next);
+    } catch (Throwable $e) {
+        error_log('[eaton][mail] status update ' . $reference . ': ' . $e->getMessage());
+    }
+
+    json_response($updated);
 }
 
 /** POST /api/admin/orders/{reference}/acknowledge — silences the new-order alert. */

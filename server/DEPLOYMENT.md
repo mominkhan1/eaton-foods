@@ -261,6 +261,80 @@ commonly missed step), and update `webhook_secret` to the live one.
 
 ---
 
+## 9. Email
+
+Order alerts go out through the server's own mail system — nothing to install.
+But **deliverability needs two DNS records**, or your order emails land in
+spam and you will not find out until a customer rings to ask where their food
+is.
+
+### Set the recipients
+
+In `eaton-config.php`:
+
+```php
+'mail' => [
+    // Who gets the new-order alert. Comma-separated for several people.
+    'order_notifications' => 'orders@yourdomain.co.uk, kitchen@yourdomain.co.uk',
+    // Leave null to send as orders@yourdomain.co.uk
+    'from_email' => null,
+],
+```
+
+**The From address must be on your own domain.** Sending as a `gmail.com`
+address from a Namecheap server fails DMARC — Gmail and Outlook will reject or
+spam it. If you want the alerts to *arrive* in Gmail that is fine; it is
+sending *as* Gmail that breaks.
+
+### DNS (cPanel → Zone Editor)
+
+**SPF** — add a TXT record on your root domain if one does not exist:
+
+```
+Type: TXT   Name: @   Value: v=spf1 +a +mx +ip4:YOUR.SERVER.IP ~all
+```
+
+Your server IP is in cPanel's right-hand sidebar. If a `v=spf1` record already
+exists, **edit it rather than adding a second** — two SPF records are invalid
+and worse than one.
+
+**DKIM** — cPanel → **Email Deliverability** → your domain → **Repair**. This
+generates and installs the key automatically. That page also flags SPF problems
+in plain language, so check it shows green for both.
+
+### Test it
+
+Sign in to the admin panel as the owner and use the test-email button, or:
+
+```bash
+curl -X POST https://yourdomain.co.uk/api/admin/test-email \
+  -H "Origin: https://yourdomain.co.uk" --cookie "your-session-cookie"
+```
+
+It sends a realistic sample order alert. **Check the spam folder too** — if it
+lands there, fix SPF/DKIM before going live.
+
+### What gets sent
+
+| When | To | Contains |
+|---|---|---|
+| Order placed | shop | Full order, customer phone, address, allergy notes, `NOT PAID YET` badge |
+| Order placed | customer *(if they gave an email)* | Confirmation, reference, tracking link |
+| Payment clears | shop | Same alert again, now marked `PAID` |
+| Marked ready | customer | Ready to collect / driver leaving |
+| Marked on the way | customer | Driver heading over |
+| Cancelled | customer | Cancellation notice |
+
+The shop gets two emails per order on purpose: the first arrives before the
+card clears, and the kitchen should not start cooking on a payment that may
+still fail.
+
+Email never blocks an order. If the mail server is down the send is logged and
+ignored, because a customer who has paid must get their order through
+regardless.
+
+---
+
 ## Going live checklist
 
 - [ ] `https://` loads with a valid certificate

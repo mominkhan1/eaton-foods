@@ -223,6 +223,12 @@ route('PUT', '/admin/banner-settings', function (): void {
     admin_save_banner_settings();
 });
 
+route('POST', '/admin/test-email', function (): void {
+    require_permission('settings.manage');
+    require __DIR__ . '/routes/admin_settings.php';
+    admin_test_email();
+});
+
 route('PUT', '/admin/promo', function (): void {
     require_permission('promo.manage');
     require __DIR__ . '/routes/admin_settings.php';

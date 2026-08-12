@@ -61,6 +61,21 @@ return [
         'currency'        => 'gbp',
     ],
 
+    // ── Email ──────────────────────────────────────────────────────────────
+    // Sent through the server's own mail system (PHP mail() → Exim on cPanel).
+    // Nothing to install.
+    'mail' => [
+        // Who gets the "new order" alert. A comma-separated string or an
+        // array. Leave null to fall back to the shop email in the admin
+        // settings, then to any owner accounts.
+        'order_notifications' => 'orders@CHANGE_ME.co.uk',
+
+        // The From address. It MUST be on your own domain — sending as a
+        // gmail.com address from a Namecheap server fails DMARC and goes
+        // straight to spam. Leave null to use orders@<your domain>.
+        'from_email' => null,
+    ],
+
     // ── Environment ────────────────────────────────────────────────────────
     // 'production' hides error detail from API responses. Set 'development'
     // only while debugging, and never leave it on a live site — the messages

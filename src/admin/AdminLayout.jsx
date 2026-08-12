@@ -8,16 +8,21 @@ import { unacknowledgedOrders } from '../lib/orders';
 import { armAudio } from '../lib/alerts';
 import mark from '../assets/eat-on-mark.png';
 
+/*
+ * `permission` mirrors what the API enforces for each area. Hiding a tab is a
+ * courtesy so the kitchen tablet is not cluttered with pages it would only be
+ * refused from — the real check happens server-side on every request.
+ */
 const NAV = [
-  { to: '/admin', end: true, label: 'Orders', icon: '🧾' },
-  { to: '/admin/menu', label: 'Menu', icon: '🍔' },
-  { to: '/admin/banners', label: 'Banners', icon: '🖼️' },
-  { to: '/admin/hours', label: 'Hours', icon: '🕒' },
-  { to: '/admin/reports', label: 'Reports', icon: '📊' },
+  { to: '/admin', end: true, label: 'Orders', icon: '🧾', permission: 'orders.view' },
+  { to: '/admin/menu', label: 'Menu', icon: '🍔', permission: 'menu.manage' },
+  { to: '/admin/banners', label: 'Banners', icon: '🖼️', permission: 'banners.manage' },
+  { to: '/admin/hours', label: 'Hours', icon: '🕒', permission: 'hours.manage' },
+  { to: '/admin/reports', label: 'Reports', icon: '📊', permission: 'reports.view' },
 ];
 
 export default function AdminLayout() {
-  const { isAuthed, signOut } = useAdminAuth();
+  const { isAuthed, status, user, signOut, can } = useAdminAuth();
   const [, setTick] = useState(0);
 
   // Repository changes and a slow clock both refresh the header state.
@@ -30,7 +35,20 @@ export default function AdminLayout() {
     };
   }, []);
 
+  // Waiting on the session probe. Showing the login form here would flash it
+  // at an already-signed-in shop on every page refresh.
+  if (status === 'checking') {
+    return (
+      <div className="grid min-h-screen place-items-center bg-surface-100">
+        <p className="text-sm text-ink-500">Loading…</p>
+      </div>
+    );
+  }
+
   if (!isAuthed) return <AdminLogin />;
+
+  const canManageHours = can('hours.manage');
+  const visibleNav = NAV.filter((entry) => can(entry.permission));
 
   const { manualStatus } = getHours();
   const open = isStoreOpen();
@@ -63,29 +81,40 @@ export default function AdminLayout() {
           <div className="ml-auto flex items-center gap-2">
             <StatusPill open={open} manualStatus={manualStatus} />
 
-            <div className="inline-flex rounded-full bg-surface-50 p-1">
-              <StatusButton
-                active={manualStatus === MANUAL_STATUS.AUTO}
-                onClick={() => cycleStatus(MANUAL_STATUS.AUTO)}
-                title={`Follow the schedule (currently ${scheduled ? 'open' : 'closed'})`}
-              >
-                Auto
-              </StatusButton>
-              <StatusButton
-                active={manualStatus === MANUAL_STATUS.OPEN}
-                onClick={() => cycleStatus(MANUAL_STATUS.OPEN)}
-                title="Force open, ignoring the schedule"
-              >
-                Open
-              </StatusButton>
-              <StatusButton
-                active={manualStatus === MANUAL_STATUS.CLOSED}
-                onClick={() => cycleStatus(MANUAL_STATUS.CLOSED)}
-                title="Force closed, ignoring the schedule"
-              >
-                Closed
-              </StatusButton>
-            </div>
+            {/* Forcing the shop open or shut is a manager decision, not a
+                kitchen one — a staff login sees the state but cannot change it. */}
+            {canManageHours && (
+              <div className="inline-flex rounded-full bg-surface-50 p-1">
+                <StatusButton
+                  active={manualStatus === MANUAL_STATUS.AUTO}
+                  onClick={() => cycleStatus(MANUAL_STATUS.AUTO)}
+                  title={`Follow the schedule (currently ${scheduled ? 'open' : 'closed'})`}
+                >
+                  Auto
+                </StatusButton>
+                <StatusButton
+                  active={manualStatus === MANUAL_STATUS.OPEN}
+                  onClick={() => cycleStatus(MANUAL_STATUS.OPEN)}
+                  title="Force open, ignoring the schedule"
+                >
+                  Open
+                </StatusButton>
+                <StatusButton
+                  active={manualStatus === MANUAL_STATUS.CLOSED}
+                  onClick={() => cycleStatus(MANUAL_STATUS.CLOSED)}
+                  title="Force closed, ignoring the schedule"
+                >
+                  Closed
+                </StatusButton>
+              </div>
+            )}
+
+            {user && (
+              <span className="hidden text-right text-xs leading-tight text-ink-500 sm:block">
+                <span className="block font-medium text-ink-800">{user.name}</span>
+                <span className="block capitalize">{user.role}</span>
+              </span>
+            )}
 
             <Link to="/" className="btn-secondary px-4 py-2 text-xs">
               View shop
@@ -97,7 +126,7 @@ export default function AdminLayout() {
         </div>
 
         <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4 pb-2 no-scrollbar">
-          {NAV.map((entry) => (
+          {visibleNav.map((entry) => (
             <NavLink
               key={entry.to}
               to={entry.to}

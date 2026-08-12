@@ -355,7 +355,7 @@ function create_order(): array
     $readyAt = $scheduledSlot ?? gmdate('Y-m-d H:i:s', time() + prep_minutes($orderType) * 60);
 
     // ── Write ─────────────────────────────────────────────────────────────
-    return db_transaction(static function (PDO $pdo) use (
+    $placed = db_transaction(static function (PDO $pdo) use (
         $orderType, $timingMode, $scheduledSlot, $readyAt,
         $name, $phone, $email, $customerNotes, $address, $priced
     ): array {
@@ -441,6 +441,31 @@ function create_order(): array
         $order = find_order_by_reference($reference);
         return present_order($order, false);
     });
+
+    /*
+     * Emails go out AFTER the transaction commits.
+     *
+     * Sending inside it would hold row locks open for however long the mail
+     * server takes, and a mail failure would roll back an order the customer
+     * has already been told about. notify_order_placed() swallows its own
+     * errors for the same reason: a full mailbox must not lose an order.
+     */
+    notify_order_placed($placed);
+
+    return $placed;
+}
+
+/** Fire the new-order emails. Never throws — email must not break checkout. */
+function notify_order_placed(array $order): void
+{
+    try {
+        require_once __DIR__ . '/mail.php';
+
+        send_new_order_notification($order);
+        send_order_confirmation($order);
+    } catch (Throwable $e) {
+        error_log('[eaton][mail] order ' . ($order['reference'] ?? '?') . ': ' . $e->getMessage());
+    }
 }
 
 /** Radius + district check, mirroring src/lib/geo.js. */

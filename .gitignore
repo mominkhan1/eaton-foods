@@ -13,3 +13,6 @@ server/config.php
 eaton-config.php
 server/logs/
 *.log
+
+# Rendered email previews, generated for eyeballing the templates.
+email-preview/

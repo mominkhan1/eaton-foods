@@ -134,6 +134,17 @@ function mark_order_paid(array $intent): void
             [$order['id'], 'payment', 'Payment received']
         );
     });
+
+    // Second alert to the shop, now showing PAID. Worth the extra email: the
+    // first one arrives before the card has cleared, and the kitchen should
+    // not start cooking on an order that might still fail.
+    try {
+        require_once __DIR__ . '/../lib/mail.php';
+        $fresh = present_order(find_order_by_reference($order['reference']), false);
+        send_new_order_notification($fresh, 'PAID');
+    } catch (Throwable $e) {
+        error_log('[eaton][mail] payment notification: ' . $e->getMessage());
+    }
 }
 
 function mark_order_payment_failed(array $intent): void

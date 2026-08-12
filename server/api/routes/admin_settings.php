@@ -161,6 +161,77 @@ function admin_save_banner_settings(): void
     json_response(get_banners(true));
 }
 
+// ── Email ──────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/admin/test-email
+ *
+ * Sends a sample new-order alert to the configured recipients, so the shop can
+ * prove delivery works without waiting for a real order — and find out about a
+ * spam-folder problem before a customer's order goes missing.
+ */
+function admin_test_email(): void
+{
+    require_once __DIR__ . '/../lib/mail.php';
+
+    $recipients = mail_notification_recipients();
+    if ($recipients === []) {
+        fail(
+            'no_recipients',
+            'No notification address is configured. Set mail.order_notifications in the config.',
+            422
+        );
+    }
+
+    // A realistic sample rather than "test 123" — it exercises the same
+    // rendering path a real order uses, so a broken template shows up here.
+    $sample = [
+        'reference' => 'EF-SAMPLE',
+        'orderType' => 'delivery',
+        'readyAt'   => gmdate('c', time() + 2100),
+        'timing'    => ['mode' => 'asap', 'slot' => null],
+        'promoCode' => null,
+        'customer'  => [
+            'name'  => 'Test Customer',
+            'phone' => '07700 900123',
+            'email' => null,
+            'notes' => 'This is a test alert, not a real order.',
+        ],
+        'address'   => [
+            'line1'    => '1 Example Street',
+            'line2'    => null,
+            'city'     => 'Manchester',
+            'postcode' => 'M14 5LJ',
+        ],
+        'lines'     => [[
+            'name'       => 'Holy Smash',
+            'sizeName'   => 'Make it a meal',
+            'quantity'   => 1,
+            'totalPence' => 948,
+            'notes'      => null,
+            'modifiers'  => [
+                ['groupName' => 'Choose your sauce', 'optionName' => 'Algerian Sauce', 'pricePence' => 0],
+            ],
+        ]],
+        'totals'    => [
+            'subtotal' => 948, 'discount' => 0, 'delivery' => 249,
+            'surcharge' => 44, 'total' => 1241,
+        ],
+        'payment'   => ['status' => 'paid', 'method' => 'stripe', 'paidAt' => gmdate('c')],
+    ];
+
+    $sent = send_new_order_notification($sample, 'TEST');
+
+    json_response([
+        'ok'         => $sent,
+        'recipients' => $recipients,
+        'from'       => mail_from_address(),
+        'message'    => $sent
+            ? 'Test email handed to the mail server. Check the inbox, and the spam folder.'
+            : 'The mail server refused the message. Check the error log.',
+    ], $sent ? 200 : 502);
+}
+
 // ── Promo ──────────────────────────────────────────────────────────────────
 
 function admin_save_promo(): void

@@ -1,60 +1,77 @@
-import { createContext, useCallback, useContext, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { api, ApiError } from '../lib/api';
 import { storeConfig } from '../data/store';
 import mark from '../assets/eat-on-mark.png';
 
 /**
- * Admin gate.
+ * Admin authentication.
  *
- * ⚠️ THIS IS NOT AUTHENTICATION. The passcode is compared in the browser, so
- * anyone who opens devtools can read it and let themselves in. It exists to
- * keep the panel out of the way during development and demos.
+ * Identity lives in a server session, not in this component. Nothing here
+ * decides whether you are allowed in — it asks the API who you are, and the
+ * API re-checks on every request. Hiding a button below is presentation; the
+ * actual enforcement is in the PHP, so a tampered client gains nothing.
  *
- * Before this goes anywhere near a real shop it must be replaced with a
- * server-side session: the panel should render nothing until an API call
- * authorises it, and every repository write should be authorised again on the
- * server. See README § Not yet wired up.
+ * `permissions` comes from the server too, so the nav reflects the role the
+ * backend will actually honour rather than a guess made here.
  */
-const DEV_PASSCODE = '1234';
-const SESSION_KEY = 'eaton.admin.session';
 
 const AdminAuthContext = createContext(null);
 
 export function AdminAuthProvider({ children }) {
-  const [isAuthed, setIsAuthed] = useState(() => {
-    try {
-      return sessionStorage.getItem(SESSION_KEY) === 'yes';
-    } catch {
-      return false;
-    }
-  });
+  const [user, setUser] = useState(null);
+  // 'checking' until the session probe finishes. Rendering the login form
+  // before we know would flash it at an already-signed-in shop on every
+  // refresh, which reads as being logged out.
+  const [status, setStatus] = useState('checking');
 
-  const signIn = useCallback((passcode) => {
-    if (passcode.trim() !== DEV_PASSCODE) return false;
+  useEffect(() => {
+    const controller = new AbortController();
 
-    setIsAuthed(true);
-    try {
-      // Session, not local — closing the tab signs the shop out.
-      sessionStorage.setItem(SESSION_KEY, 'yes');
-    } catch {
-      // Fine: the sign-in just won't survive a refresh.
-    }
-    return true;
+    api
+      .me({ signal: controller.signal })
+      .then((data) => {
+        setUser(data?.user ?? null);
+        setStatus('ready');
+      })
+      .catch((error) => {
+        if (error?.name === 'AbortError') return;
+        // A network failure here is not "signed out" — it means the API is
+        // unreachable, which needs a different message from a login prompt.
+        setUser(null);
+        setStatus(error instanceof ApiError && error.isTransient ? 'offline' : 'ready');
+      });
+
+    return () => controller.abort();
   }, []);
 
-  const signOut = useCallback(() => {
-    setIsAuthed(false);
+  const signIn = useCallback(async (email, password) => {
+    const data = await api.login(email, password);
+    setUser(data.user);
+    setStatus('ready');
+    return data.user;
+  }, []);
+
+  const signOut = useCallback(async () => {
     try {
-      sessionStorage.removeItem(SESSION_KEY);
-    } catch {
-      // Nothing to clean up.
+      await api.logout();
+    } finally {
+      // Clear locally even if the request failed — the alternative is a UI
+      // that claims you are still signed in when you asked not to be.
+      setUser(null);
     }
   }, []);
 
-  return (
-    <AdminAuthContext.Provider value={{ isAuthed, signIn, signOut }}>
-      {children}
-    </AdminAuthContext.Provider>
+  const can = useCallback(
+    (permission) => Boolean(user?.permissions?.includes(permission)),
+    [user],
   );
+
+  const value = useMemo(
+    () => ({ user, status, isAuthed: Boolean(user), signIn, signOut, can }),
+    [user, status, signIn, signOut, can],
+  );
+
+  return <AdminAuthContext.Provider value={value}>{children}</AdminAuthContext.Provider>;
 }
 
 export function useAdminAuth() {
@@ -64,49 +81,107 @@ export function useAdminAuth() {
 }
 
 export function AdminLogin() {
-  const { signIn } = useAdminAuth();
-  const [passcode, setPasscode] = useState('');
-  const [error, setError] = useState(false);
+  const { signIn, status } = useAdminAuth();
 
-  function onSubmit(event) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onSubmit(event) {
     event.preventDefault();
-    if (!signIn(passcode)) {
-      setError(true);
-      setPasscode('');
+    if (busy) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      await signIn(email.trim(), password);
+    } catch (caught) {
+      // The server already writes these for a human to read, and deliberately
+      // does not say whether it was the email or the password that was wrong.
+      setError(
+        caught instanceof ApiError
+          ? caught.message
+          : 'Could not sign in. Please try again.',
+      );
+      setPassword('');
+      setBusy(false);
     }
+  }
+
+  if (status === 'offline') {
+    return (
+      <div className="grid min-h-screen place-items-center bg-surface-100 px-4">
+        <div className="card w-full max-w-sm p-6 text-center">
+          <h1 className="text-2xl text-ink-950">Cannot reach the server</h1>
+          <p className="mt-2 text-sm text-ink-500">
+            The admin panel could not contact the site. Check your connection, then reload.
+          </p>
+          <button type="button" className="btn-primary mt-5 w-full" onClick={() => window.location.reload()}>
+            Reload
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="grid min-h-screen place-items-center bg-surface-100 px-4">
-      <form onSubmit={onSubmit} className="card w-full max-w-sm p-6">
+      <form onSubmit={onSubmit} className="card w-full max-w-sm p-6" noValidate>
         <img src={mark} alt="" aria-hidden="true" width={70} height={44} className="h-11 w-auto" />
 
         <h1 className="mt-4 text-3xl text-ink-950">{storeConfig.name} admin</h1>
-        <p className="mt-1 text-sm text-ink-500">Enter the shop passcode.</p>
+        <p className="mt-1 text-sm text-ink-500">Sign in to manage the shop.</p>
 
+        <label className="mt-5 block text-sm font-medium text-ink-700" htmlFor="admin-email">
+          Email
+        </label>
         <input
-          type="password"
-          className="field mt-5"
-          value={passcode}
+          id="admin-email"
+          type="email"
+          className="field mt-1"
+          value={email}
           onChange={(event) => {
-            setPasscode(event.target.value);
-            setError(false);
+            setEmail(event.target.value);
+            setError(null);
           }}
-          placeholder="Passcode"
-          aria-label="Passcode"
+          autoComplete="username"
           autoFocus
-          inputMode="numeric"
+          required
+          disabled={busy}
         />
 
-        {error && <p className="mt-2 text-sm text-chilli-500">Wrong passcode.</p>}
+        <label className="mt-4 block text-sm font-medium text-ink-700" htmlFor="admin-password">
+          Password
+        </label>
+        <input
+          id="admin-password"
+          type="password"
+          className="field mt-1"
+          value={password}
+          onChange={(event) => {
+            setPassword(event.target.value);
+            setError(null);
+          }}
+          autoComplete="current-password"
+          required
+          disabled={busy}
+        />
 
-        <button type="submit" className="btn-primary mt-4 w-full">
-          Sign in
+        {error && (
+          <p role="alert" className="mt-3 rounded-xl bg-chilli-500/10 px-3 py-2 text-sm text-chilli-500">
+            {error}
+          </p>
+        )}
+
+        <button type="submit" className="btn-primary mt-5 w-full" disabled={busy}>
+          {busy ? 'Signing in…' : 'Sign in'}
         </button>
 
-        <p className="mt-5 rounded-xl bg-chilli-500/10 px-4 py-3 text-xs text-chilli-500">
-          <strong>Not real security.</strong> The passcode ({DEV_PASSCODE}) is checked in the
-          browser and readable by anyone. Replace with a server session before going live.
+        <p className="mt-5 text-xs text-ink-400">
+          Accounts are created by the shop owner. If you are locked out, ask them to reset your
+          password.
         </p>
       </form>
     </div>
