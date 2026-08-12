@@ -16,3 +16,11 @@ server/logs/
 
 # Rendered email previews, generated for eyeballing the templates.
 email-preview/
+
+# Deployment archives — rebuilt from source, no reason to version them.
+*.zip
+
+# The raw browser export. It can contain customer orders with names, phone
+# numbers and addresses, so it stays out of git; only the generated
+# server/local-data.sql and the image files are committed.
+eaton-export.json
