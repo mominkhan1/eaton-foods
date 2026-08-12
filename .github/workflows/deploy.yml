@@ -39,6 +39,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Fail early and legibly. Without this, a missing secret surfaces as the
+      # upload action's "Input required and not supplied: server", which does
+      # not say which secret, where to put it, or what to call it.
+      - name: Check the deploy secrets exist
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          missing=""
+          [ -z "$FTP_SERVER" ]   && missing="$missing FTP_SERVER"
+          [ -z "$FTP_USERNAME" ] && missing="$missing FTP_USERNAME"
+          [ -z "$FTP_PASSWORD" ] && missing="$missing FTP_PASSWORD"
+
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing"
+            echo ""
+            echo "Add them under:"
+            echo "  Settings -> Secrets and variables -> Actions -> New repository secret"
+            echo ""
+            echo "Names are case-sensitive and must match exactly:"
+            echo "  FTP_SERVER    the hostname from cPanel -> FTP Accounts -> Configure FTP Client"
+            echo "  FTP_USERNAME  the full username, e.g. deploy@yourdomain.co.uk"
+            echo "  FTP_PASSWORD  that account's password"
+            echo ""
+            echo "Note: they must be REPOSITORY secrets, not Environment or"
+            echo "Organization secrets, and not Variables — the Variables tab"
+            echo "sits beside Secrets on the same page and is easy to pick by"
+            echo "mistake."
+            exit 1
+          fi
+
+          echo "All three secrets are present."
+          echo "  FTP_SERVER   is ${#FTP_SERVER} characters"
+          echo "  FTP_USERNAME is ${#FTP_USERNAME} characters"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
