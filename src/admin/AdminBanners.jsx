@@ -9,11 +9,10 @@ import {
   setBannerPublished,
   moveBanner,
   saveBannerSettings,
-  resetBanners,
   savePromo,
-  resetPromo,
 } from '../lib/repository';
 import { deleteImage } from '../lib/images';
+import { useAdminAction } from './useAdminAction';
 import {
   AUTOPLAY_MIN_SECONDS,
   AUTOPLAY_MAX_SECONDS,
@@ -26,12 +25,38 @@ import { formatPence, toPence } from '../lib/money';
 /**
  * The first-order coupon.
  *
- * Saves straight through on change — this is the same pattern as the banner
- * settings above it, and the repository clamps the percentage and minimum on
- * write, so a half-typed number can never reach the basket maths.
+ * Text fields keep a local draft and save when they lose focus; the checkbox
+ * saves straight through. Saving on every keystroke would be a request per
+ * character, and worse, would briefly store a half-typed code — `EATON1` is a
+ * live coupon for as long as it takes to type the `0`.
+ *
+ * The server clamps the percentage and minimum on write, so a nonsense number
+ * still cannot reach the basket maths.
  */
 function CouponCard() {
   const { promo } = useCatalog();
+  const { run, busy, error } = useAdminAction();
+
+  // Keyed by the stored value, so a save (or another manager's edit arriving
+  // on the next load) replaces the draft rather than fighting it.
+  const [draft, setDraft] = useState(promo);
+  const [editingKey, setEditingKey] = useState(null);
+
+  if (draft !== promo && editingKey === null) setDraft(promo);
+
+  function field(key) {
+    return {
+      value: draft[key] ?? '',
+      disabled: !promo.isOn || busy,
+      onFocus: () => setEditingKey(key),
+      onChange: (event) => setDraft({ ...draft, [key]: event.target.value }),
+      onBlur: async () => {
+        setEditingKey(null);
+        if (draft[key] === promo[key]) return;
+        await run(() => savePromo({ [key]: draft[key] }));
+      },
+    };
+  }
 
   return (
     <section className="card mt-3 p-4">
@@ -44,51 +69,32 @@ function CouponCard() {
         <input
           type="checkbox"
           checked={promo.isOn}
-          onChange={(event) => savePromo({ isOn: event.target.checked })}
+          disabled={busy}
+          onChange={(event) => run(() => savePromo({ isOn: event.target.checked }))}
           className="h-4 w-4 accent-brand-500"
         />
         <span className="text-sm text-ink-800">Offer is running</span>
       </label>
 
+      {error && (
+        <p className="mt-3 rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">{error}</p>
+      )}
+
       <div className={`mt-4 grid gap-4 sm:grid-cols-2 ${promo.isOn ? '' : 'opacity-50'}`}>
         <Labelled label="Code" hint="Customers type this at checkout. Stored upper-case.">
-          <input
-            type="text"
-            value={promo.code}
-            disabled={!promo.isOn}
-            onChange={(event) => savePromo({ code: event.target.value })}
-            className="field font-mono uppercase"
-          />
+          <input type="text" {...field('code')} className="field font-mono uppercase" />
         </Labelled>
 
         <Labelled label="Headline" hint="The bold text in the strip.">
-          <input
-            type="text"
-            value={promo.title}
-            disabled={!promo.isOn}
-            onChange={(event) => savePromo({ title: event.target.value })}
-            className="field"
-          />
+          <input type="text" {...field('title')} className="field" />
         </Labelled>
 
         <Labelled label="Message" hint="The lighter line beside it. Hidden on small screens.">
-          <input
-            type="text"
-            value={promo.message}
-            disabled={!promo.isOn}
-            onChange={(event) => savePromo({ message: event.target.value })}
-            className="field"
-          />
+          <input type="text" {...field('message')} className="field" />
         </Labelled>
 
         <Labelled label="Button text" hint="Links through to the menu.">
-          <input
-            type="text"
-            value={promo.buttonText}
-            disabled={!promo.isOn}
-            onChange={(event) => savePromo({ buttonText: event.target.value })}
-            className="field"
-          />
+          <input type="text" {...field('buttonText')} className="field" />
         </Labelled>
 
         <Labelled label="Discount" hint="Percentage off the basket subtotal.">
@@ -97,9 +103,7 @@ function CouponCard() {
               type="number"
               min={0}
               max={100}
-              value={promo.percentage}
-              disabled={!promo.isOn}
-              onChange={(event) => savePromo({ percentage: event.target.value })}
+              {...field('percentage')}
               className="field w-24 tabular-nums"
             />
             <span className="text-sm text-ink-500">% off</span>
@@ -113,32 +117,25 @@ function CouponCard() {
               type="number"
               min={0}
               step="0.01"
-              value={promo.minimumSpend}
-              disabled={!promo.isOn}
-              onChange={(event) => savePromo({ minimumSpend: event.target.value })}
+              {...field('minimumSpend')}
               className="field w-28 tabular-nums"
             />
           </span>
         </Labelled>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <p className="flex-1 rounded-xl bg-surface-0 px-4 py-3 text-xs text-ink-500">
-          Live now:{' '}
-          {promo.isOn ? (
-            <>
-              <strong className="text-ink-800">{promo.code || '(no code)'}</strong> gives{' '}
-              <strong className="text-ink-800">{promo.percentage}%</strong> off baskets over{' '}
-              <strong className="text-ink-800">{formatPence(toPence(promo.minimumSpend))}</strong>.
-            </>
-          ) : (
-            'the offer strip is hidden and the basket refuses every code.'
-          )}
-        </p>
-        <button type="button" onClick={resetPromo} className="btn-ghost px-3 py-2 text-xs">
-          Reset coupon
-        </button>
-      </div>
+      <p className="mt-4 rounded-xl bg-surface-0 px-4 py-3 text-xs text-ink-500">
+        Live now:{' '}
+        {promo.isOn ? (
+          <>
+            <strong className="text-ink-800">{promo.code || '(no code)'}</strong> gives{' '}
+            <strong className="text-ink-800">{promo.percentage}%</strong> off baskets over{' '}
+            <strong className="text-ink-800">{formatPence(toPence(promo.minimumSpend))}</strong>.
+          </>
+        ) : (
+          'the offer strip is hidden and the basket refuses every code.'
+        )}
+      </p>
     </section>
   );
 }
@@ -162,6 +159,7 @@ const LINK_HINTS = [
 
 export default function AdminBanners() {
   const { allBanners, bannerSettings } = useCatalog();
+  const { run, busy, error } = useAdminAction();
   const [draft, setDraft] = useState(null);
   const [notice, setNotice] = useState(null);
 
@@ -169,10 +167,17 @@ export default function AdminBanners() {
     (slide) => slide.isPublished !== false && isBannerRenderable(slide),
   ).length;
 
-  function onDelete(slide) {
-    deleteBanner(slide.id);
+  async function onDelete(slide) {
+    setNotice(null);
+
+    const { ok } = await run(() => deleteBanner(slide.id));
+    if (!ok) return;
+
+    // The slide is gone, so its photos are no longer referenced. Not awaited:
+    // a file left on disk is untidy, not a failed deletion.
     if (slide.imageId) deleteImage(slide.imageId);
     if (slide.backgroundImageId) deleteImage(slide.backgroundImageId);
+
     setNotice(`Deleted “${slide.heading || 'Untitled slide'}”.`);
   }
 
@@ -210,6 +215,10 @@ export default function AdminBanners() {
         </button>
       </div>
 
+      {error && (
+        <p className="mt-4 rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">{error}</p>
+      )}
+
       {notice && (
         <p className="mt-4 rounded-xl bg-surface-50 px-4 py-3 text-sm text-ink-500">{notice}</p>
       )}
@@ -225,7 +234,8 @@ export default function AdminBanners() {
           <input
             type="checkbox"
             checked={bannerSettings.isAutoplayOn}
-            onChange={(event) => saveBannerSettings({ isAutoplayOn: event.target.checked })}
+            disabled={busy}
+            onChange={(event) => run(() => saveBannerSettings({ isAutoplayOn: event.target.checked }))}
             className="h-4 w-4 accent-brand-500"
           />
           <span className="text-sm text-ink-800">Rotate automatically</span>
@@ -233,13 +243,16 @@ export default function AdminBanners() {
 
         <label className="flex items-center gap-2">
           <span className="text-sm text-ink-500">Every</span>
+          {/* Saved on blur rather than per keystroke — typing "12" would
+              otherwise store a 1-second carousel on the way past. */}
           <input
             type="number"
             min={AUTOPLAY_MIN_SECONDS}
             max={AUTOPLAY_MAX_SECONDS}
-            value={bannerSettings.autoplaySeconds}
-            disabled={!bannerSettings.isAutoplayOn}
-            onChange={(event) => saveBannerSettings({ autoplaySeconds: event.target.value })}
+            defaultValue={bannerSettings.autoplaySeconds}
+            key={bannerSettings.autoplaySeconds}
+            disabled={!bannerSettings.isAutoplayOn || busy}
+            onBlur={(event) => run(() => saveBannerSettings({ autoplaySeconds: event.target.value }))}
             className="field w-20 tabular-nums disabled:opacity-40"
             aria-label="Seconds between slides"
           />
@@ -264,9 +277,10 @@ export default function AdminBanners() {
             label="Drifting embers"
             hint="Sits behind the whole page, including the menu — keep it low."
             enabled={bannerSettings.areEmbersOn}
-            onToggle={(areEmbersOn) => saveBannerSettings({ areEmbersOn })}
+            busy={busy}
+            onToggle={(areEmbersOn) => run(() => saveBannerSettings({ areEmbersOn }))}
             intensity={bannerSettings.emberIntensity}
-            onIntensity={(emberIntensity) => saveBannerSettings({ emberIntensity })}
+            onIntensity={(emberIntensity) => run(() => saveBannerSettings({ emberIntensity }))}
           />
         </div>
 
@@ -299,15 +313,15 @@ export default function AdminBanners() {
                 <span className="flex flex-col gap-1">
                   <OrderButton
                     label="Move up"
-                    disabled={index === 0}
-                    onClick={() => moveBanner(slide.id, -1)}
+                    disabled={index === 0 || busy}
+                    onClick={() => run(() => moveBanner(slide.id, -1))}
                   >
                     ▲
                   </OrderButton>
                   <OrderButton
                     label="Move down"
-                    disabled={index === allBanners.length - 1}
-                    onClick={() => moveBanner(slide.id, 1)}
+                    disabled={index === allBanners.length - 1 || busy}
+                    onClick={() => run(() => moveBanner(slide.id, 1))}
                   >
                     ▼
                   </OrderButton>
@@ -355,8 +369,9 @@ export default function AdminBanners() {
                 <span className="flex gap-1">
                   <button
                     type="button"
-                    onClick={() => setBannerPublished(slide.id, hidden)}
-                    className="btn-ghost px-3 py-1.5 text-xs"
+                    onClick={() => run(() => setBannerPublished(slide.id, hidden))}
+                    disabled={busy}
+                    className="btn-ghost px-3 py-1.5 text-xs disabled:opacity-40"
                   >
                     {hidden ? 'Show' : 'Hide'}
                   </button>
@@ -370,7 +385,8 @@ export default function AdminBanners() {
                   <button
                     type="button"
                     onClick={() => onDelete(slide)}
-                    className="btn-ghost px-3 py-1.5 text-xs hover:text-chilli-500"
+                    disabled={busy}
+                    className="btn-ghost px-3 py-1.5 text-xs hover:text-chilli-500 disabled:opacity-40"
                   >
                     Delete
                   </button>
@@ -380,19 +396,6 @@ export default function AdminBanners() {
           })}
         </ul>
       )}
-
-      <div className="mt-8 border-t border-surface-200 pt-5">
-        <button
-          type="button"
-          onClick={() => {
-            resetBanners();
-            setNotice('Banners reset to the starting slides.');
-          }}
-          className="btn-ghost px-0 text-xs hover:text-chilli-500"
-        >
-          Reset banners to the seed slides
-        </button>
-      </div>
 
       <BannerEditor
         draft={draft}
@@ -404,13 +407,14 @@ export default function AdminBanners() {
   );
 }
 
-function EffectControl({ label, hint, enabled, onToggle, intensity, onIntensity }) {
+function EffectControl({ label, hint, enabled, busy, onToggle, intensity, onIntensity }) {
   return (
     <div className="rounded-xl border border-surface-300 p-3">
       <label className="flex cursor-pointer items-center gap-3">
         <input
           type="checkbox"
           checked={enabled}
+          disabled={busy}
           onChange={(event) => onToggle(event.target.checked)}
           className="h-4 w-4 accent-brand-500"
         />
@@ -419,24 +423,53 @@ function EffectControl({ label, hint, enabled, onToggle, intensity, onIntensity 
 
       <p className="mt-1 text-xs text-ink-500/80">{hint}</p>
 
-      <label className="mt-3 flex items-center gap-3">
-        <span className="text-xs text-ink-500">Strength</span>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
-          value={intensity}
-          disabled={!enabled}
-          onChange={(event) => onIntensity(event.target.value)}
-          className="flex-1 accent-brand-500 disabled:opacity-40"
-          aria-label={`${label} strength`}
-        />
-        <span className="w-9 text-right text-xs tabular-nums text-ink-800">
-          {Math.round(intensity * 100)}%
-        </span>
-      </label>
+      <IntensitySlider
+        label={label}
+        enabled={enabled}
+        busy={busy}
+        intensity={intensity}
+        onCommit={onIntensity}
+      />
     </div>
+  );
+}
+
+/**
+ * The slider tracks the drag locally and saves once the shop lets go.
+ *
+ * A range input fires on every step, so saving from `onChange` would be a
+ * request per pixel dragged — twenty writes to cross the track.
+ */
+function IntensitySlider({ label, enabled, busy, intensity, onCommit }) {
+  const [dragging, setDragging] = useState(null);
+  const shown = dragging ?? intensity;
+
+  function commit(event) {
+    setDragging(null);
+    if (Number(event.target.value) !== Number(intensity)) onCommit(event.target.value);
+  }
+
+  return (
+    <label className="mt-3 flex items-center gap-3">
+      <span className="text-xs text-ink-500">Strength</span>
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.05"
+        value={shown}
+        disabled={!enabled || busy}
+        onChange={(event) => setDragging(event.target.value)}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
+        className="flex-1 accent-brand-500 disabled:opacity-40"
+        aria-label={`${label} strength`}
+      />
+      <span className="w-9 text-right text-xs tabular-nums text-ink-800">
+        {Math.round(shown * 100)}%
+      </span>
+    </label>
   );
 }
 
@@ -456,6 +489,7 @@ function OrderButton({ label, disabled, onClick, children }) {
 }
 
 function BannerEditor({ draft, existingIds, onClose, onSaved }) {
+  const { run, busy } = useAdminAction();
   const [form, setForm] = useState(null);
   const [error, setError] = useState(null);
 
@@ -493,7 +527,7 @@ function BannerEditor({ draft, existingIds, onClose, onSaved }) {
     setError(null);
   }
 
-  function onSubmit(event) {
+  async function onSubmit(event) {
     event.preventDefault();
 
     if (!form.heading.trim() && !form.headingAccent.trim()) {
@@ -515,24 +549,31 @@ function BannerEditor({ draft, existingIds, onClose, onSaved }) {
       ? slugify(form.heading || form.headingAccent || 'slide', existingIds, 'slide')
       : draft.id;
 
-    saveBanner({
-      id,
-      eyebrow: form.eyebrow.trim(),
-      heading: form.heading.trim(),
-      headingAccent: form.headingAccent.trim(),
-      description: form.description.trim(),
-      imageId: form.imageId,
-      backgroundImageId: form.backgroundImageId,
-      priceNote: form.priceNote.trim(),
-      price: form.price.trim(),
-      primaryLabel: form.primaryLabel.trim(),
-      primaryHref: form.primaryHref.trim(),
-      secondaryLabel: form.secondaryLabel.trim(),
-      secondaryHref: form.secondaryHref.trim(),
-      showStoreStatus: form.showStoreStatus,
-      isPublished: form.isPublished,
-      ...(draft.isNew ? {} : { displayOrder: draft.displayOrder }),
-    });
+    const { ok, error: failure } = await run(() =>
+      saveBanner({
+        id,
+        eyebrow: form.eyebrow.trim(),
+        heading: form.heading.trim(),
+        headingAccent: form.headingAccent.trim(),
+        description: form.description.trim(),
+        imageId: form.imageId,
+        backgroundImageId: form.backgroundImageId,
+        priceNote: form.priceNote.trim(),
+        price: form.price.trim(),
+        primaryLabel: form.primaryLabel.trim(),
+        primaryHref: form.primaryHref.trim(),
+        secondaryLabel: form.secondaryLabel.trim(),
+        secondaryHref: form.secondaryHref.trim(),
+        showStoreStatus: form.showStoreStatus,
+        isPublished: form.isPublished,
+        ...(draft.isNew ? {} : { displayOrder: draft.displayOrder }),
+      }),
+    );
+
+    if (!ok) {
+      setError(failure?.message ?? 'That slide could not be saved.');
+      return;
+    }
 
     onSaved?.(form.heading || form.headingAccent);
     close();
@@ -704,8 +745,8 @@ function BannerEditor({ draft, existingIds, onClose, onSaved }) {
           <button type="button" onClick={close} className="btn-secondary flex-1">
             Cancel
           </button>
-          <button type="submit" className="btn-primary flex-1">
-            {draft.isNew ? 'Add slide' : 'Save changes'}
+          <button type="submit" className="btn-primary flex-1" disabled={busy}>
+            {busy ? 'Saving…' : draft.isNew ? 'Add slide' : 'Save changes'}
           </button>
         </div>
       </form>

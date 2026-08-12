@@ -24,21 +24,24 @@ import AdminHours from './admin/AdminHours';
 import AdminReports from './admin/AdminReports';
 
 export default function App() {
+  // The admin panel needs the unpublished rows too, so the catalog is loaded
+  // differently for it. Decided here rather than inside the provider because
+  // it changes which endpoint is called, not just what is rendered.
+  const isAdmin = useLocation().pathname.startsWith('/admin');
+
   return (
-    <CatalogProvider>
+    <CatalogProvider admin={isAdmin}>
       <OrderProvider>
         <CartProvider>
-          <AppShell />
+          <AppShell isAdmin={isAdmin} />
         </CartProvider>
       </OrderProvider>
     </CatalogProvider>
   );
 }
 
-function AppShell() {
-  const location = useLocation();
-  const isAdmin = location.pathname.startsWith('/admin');
-  const { bannerSettings } = useCatalog();
+function AppShell({ isAdmin }) {
+  const { bannerSettings, loading, error, reload } = useCatalog();
 
   if (isAdmin) {
     // No decorative effects in the admin panel — it is a working tool, and
@@ -55,6 +58,23 @@ function AppShell() {
           </Route>
         </Routes>
       </AdminAuthProvider>
+    );
+  }
+
+  // Before the menu has loaded there is nothing honest to show: the seed data
+  // behind the snapshot is a starting point for a fresh install, not this
+  // shop's menu, and letting a customer build a basket from it would mean
+  // prices that do not match what the server will charge.
+  if (loading) return <FullPageMessage>Loading the menu…</FullPageMessage>;
+
+  if (error) {
+    return (
+      <FullPageMessage title="We can't load the menu">
+        <p className="mt-2 text-ink-500">{error.message}</p>
+        <button type="button" onClick={reload} className="btn-primary mt-6">
+          Try again
+        </button>
+      </FullPageMessage>
     );
   }
 
@@ -85,5 +105,20 @@ function AppShell() {
       <OrderTypeGate />
       <CartDrawer />
     </>
+  );
+}
+
+function FullPageMessage({ title, children }) {
+  return (
+    <div className="grid min-h-screen place-items-center px-4 text-center">
+      <div>
+        {title ? (
+          <h1 className="text-3xl text-ink-950">{title}</h1>
+        ) : (
+          <p className="text-sm text-ink-500">{children}</p>
+        )}
+        {title && children}
+      </div>
+    </div>
   );
 }

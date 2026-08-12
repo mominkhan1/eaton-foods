@@ -1,33 +1,16 @@
-import { useEffect, useState } from 'react';
-import { getImageUrl, peekImageUrl } from '../lib/images';
+import { useState } from 'react';
+import { getImageUrl } from '../lib/images';
 
 /**
- * Resolve a stored image id to an object URL.
+ * Resolve a stored image id to its public URL.
  *
- * The cached URL is read during render rather than pushed into state by an
- * effect, so a re-render never flashes the fallback for an image that is
- * already loaded, and no cascading render is triggered.
+ * A plain lookup: the URL arrives with the catalog, so there is nothing to
+ * await and no effect to run. An id the registry has never seen resolves to
+ * null and the caller falls back to its emoji — which is what happens for an
+ * order line whose item has since had its photo removed.
  */
 export function useImageUrl(imageId) {
-  // Tagged with the id it belongs to, so a change of item can't briefly show
-  // the previous item's photo.
-  const [resolved, setResolved] = useState({ id: null, url: null });
-
-  useEffect(() => {
-    if (!imageId || peekImageUrl(imageId)) return undefined;
-
-    let cancelled = false;
-    getImageUrl(imageId).then((url) => {
-      if (!cancelled) setResolved({ id: imageId, url });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [imageId]);
-
-  if (!imageId) return null;
-  return peekImageUrl(imageId) ?? (resolved.id === imageId ? resolved.url : null);
+  return getImageUrl(imageId);
 }
 
 /**

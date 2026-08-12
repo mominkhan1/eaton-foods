@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Modal from '../components/Modal';
 import { useCatalog } from '../context/CatalogContext';
 import {
@@ -7,8 +7,6 @@ import {
   saveItem,
   deleteItem,
   setItemPublished,
-  resetCatalog,
-  allReferencedImageIds,
 } from '../lib/repository';
 import { ORDER_TYPE } from '../data/store';
 import { toPence, formatPence } from '../lib/money';
@@ -17,10 +15,12 @@ import { slugify } from '../lib/slug';
 import AdminOptionGroups from './AdminOptionGroups';
 import ImageField from './ImageField';
 import Thumb from '../components/Thumb';
-import { pruneImages, deleteImage } from '../lib/images';
+import { deleteImage } from '../lib/images';
+import { useAdminAction } from './useAdminAction';
 
 export default function AdminMenu() {
   const { allCategories, allItems, modifierGroups } = useCatalog();
+  const { run, busy, error } = useAdminAction();
 
   const [tab, setTab] = useState('items');
   const [categoryDraft, setCategoryDraft] = useState(null);
@@ -37,30 +37,35 @@ export default function AdminMenu() {
     return map;
   }, [allItems]);
 
-  // Sweep up blobs left behind by deletes, resets, or a tab that closed
-  // mid-edit. Runs whenever the catalog changes.
-  //
-  // The keep-list spans every collection, not just the menu — pruning against
-  // the menu alone would delete each banner's photo as an orphan.
-  useEffect(() => {
-    pruneImages(allReferencedImageIds());
-  }, [allItems, allCategories]);
-
   const shownCategories =
     activeCategory === 'all'
       ? allCategories
       : allCategories.filter((category) => category.id === activeCategory);
 
-  function onDeleteCategory(category) {
-    const result = deleteCategory(category.id);
+  async function onDeleteCategory(category) {
+    setNotice(null);
+
+    const { ok, result } = await run(() => deleteCategory(category.id));
+    if (!ok) return;
+
     if (!result.ok) {
       setNotice(
         `“${category.name}” still has ${result.count} item${result.count === 1 ? '' : 's'}. Move or delete them first.`,
       );
       return;
     }
+
+    // The row is gone, so the photo is no longer in use — `force` is not
+    // needed, but the delete is deliberately not awaited into an error: a
+    // leftover file is a tidiness problem, not something to report as a
+    // failed deletion.
     if (category.imageId) deleteImage(category.imageId);
+  }
+
+  async function onDeleteItem(item) {
     setNotice(null);
+    const { ok } = await run(() => deleteItem(item.id));
+    if (ok && item.imageId) deleteImage(item.imageId);
   }
 
   return (
@@ -91,8 +96,13 @@ export default function AdminMenu() {
           activeCategory={activeCategory}
           setActiveCategory={setActiveCategory}
           notice={notice}
-          setNotice={setNotice}
+          error={error}
+          busy={busy}
           onDeleteCategory={onDeleteCategory}
+          onDeleteItem={onDeleteItem}
+          onSetPublished={(item) =>
+            run(() => setItemPublished(item.id, item.isPublished === false))
+          }
           setCategoryDraft={setCategoryDraft}
           setItemDraft={setItemDraft}
         />
@@ -139,8 +149,11 @@ function ItemsTab({
   activeCategory,
   setActiveCategory,
   notice,
-  setNotice,
+  error,
+  busy,
   onDeleteCategory,
+  onDeleteItem,
+  onSetPublished,
   setCategoryDraft,
   setItemDraft,
 }) {
@@ -181,6 +194,12 @@ function ItemsTab({
           </button>
         </div>
       </div>
+
+      {error && (
+        <p className="mt-4 rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">
+          {error}
+        </p>
+      )}
 
       {notice && (
         <p className="mt-4 rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">
@@ -236,7 +255,8 @@ function ItemsTab({
                   <button
                     type="button"
                     onClick={() => onDeleteCategory(category)}
-                    className="btn-ghost px-3 py-1.5 text-xs hover:text-chilli-500"
+                    disabled={busy}
+                    className="btn-ghost px-3 py-1.5 text-xs hover:text-chilli-500 disabled:opacity-40"
                   >
                     Delete
                   </button>
@@ -285,8 +305,9 @@ function ItemsTab({
                       <span className="flex gap-1">
                         <button
                           type="button"
-                          onClick={() => setItemPublished(item.id, item.isPublished === false)}
-                          className="btn-ghost px-3 py-1.5 text-xs"
+                          onClick={() => onSetPublished(item)}
+                          disabled={busy}
+                          className="btn-ghost px-3 py-1.5 text-xs disabled:opacity-40"
                           title={item.isPublished === false ? 'Show on the menu' : 'Hide from the menu'}
                         >
                           {item.isPublished === false ? 'Show' : 'Hide'}
@@ -308,11 +329,9 @@ function ItemsTab({
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            deleteItem(item.id);
-                            if (item.imageId) deleteImage(item.imageId);
-                          }}
-                          className="btn-ghost px-3 py-1.5 text-xs hover:text-chilli-500"
+                          onClick={() => onDeleteItem(item)}
+                          disabled={busy}
+                          className="btn-ghost px-3 py-1.5 text-xs hover:text-chilli-500 disabled:opacity-40"
                         >
                           Delete
                         </button>
@@ -326,18 +345,6 @@ function ItemsTab({
         })}
       </div>
 
-      <div className="mt-8 border-t border-surface-200 pt-5">
-        <button
-          type="button"
-          onClick={() => {
-            resetCatalog();
-            setNotice(null);
-          }}
-          className="btn-ghost px-0 text-xs hover:text-chilli-500"
-        >
-          Reset menu to the seed data
-        </button>
-      </div>
     </>
   );
 }
@@ -357,6 +364,7 @@ function FilterChip({ active, onClick, children }) {
 }
 
 function CategoryEditor({ draft, existingIds, nextOrder, onClose }) {
+  const { run, busy } = useAdminAction();
   const [form, setForm] = useState(null);
   const [error, setError] = useState(null);
 
@@ -374,7 +382,7 @@ function CategoryEditor({ draft, existingIds, nextOrder, onClose }) {
 
   if (!draft || !form) return null;
 
-  function onSubmit(event) {
+  async function onSubmit(event) {
     event.preventDefault();
 
     if (!form.name.trim()) {
@@ -382,14 +390,24 @@ function CategoryEditor({ draft, existingIds, nextOrder, onClose }) {
       return;
     }
 
-    saveCategory({
-      id: draft.isNew ? slugify(form.name, existingIds) : draft.id,
-      name: form.name.trim(),
-      emoji: form.emoji.trim() || '🍽️',
-      description: form.description.trim(),
-      imageId: form.imageId,
-      displayOrder: draft.isNew ? nextOrder : draft.displayOrder,
-    });
+    const { ok, error: failure } = await run(() =>
+      saveCategory({
+        id: draft.isNew ? slugify(form.name, existingIds) : draft.id,
+        name: form.name.trim(),
+        emoji: form.emoji.trim() || '🍽️',
+        description: form.description.trim(),
+        imageId: form.imageId,
+        displayOrder: draft.isNew ? nextOrder : draft.displayOrder,
+        isPublished: draft.isPublished ?? true,
+      }),
+    );
+
+    // The modal stays open on a failure, so the shop does not lose what it
+    // typed to an error it might want to correct.
+    if (!ok) {
+      setError(failure?.message ?? 'That category could not be saved.');
+      return;
+    }
 
     setForm(null);
     onClose();
@@ -451,8 +469,8 @@ function CategoryEditor({ draft, existingIds, nextOrder, onClose }) {
 
         {error && <p className="text-sm text-chilli-500">{error}</p>}
 
-        <button type="submit" className="btn-primary mt-1">
-          {draft.isNew ? 'Add category' : 'Save changes'}
+        <button type="submit" className="btn-primary mt-1" disabled={busy}>
+          {busy ? 'Saving…' : draft.isNew ? 'Add category' : 'Save changes'}
         </button>
       </form>
     </Modal>
@@ -460,6 +478,7 @@ function CategoryEditor({ draft, existingIds, nextOrder, onClose }) {
 }
 
 function ItemEditor({ draft, categories, modifierGroups, existingIds, onClose }) {
+  const { run, busy } = useAdminAction();
   const [form, setForm] = useState(null);
   const [error, setError] = useState(null);
 
@@ -511,7 +530,7 @@ function ItemEditor({ draft, categories, modifierGroups, existingIds, onClose })
     setForm({ ...form, modifierGroups: chosen });
   }
 
-  function onSubmit(event) {
+  async function onSubmit(event) {
     event.preventDefault();
 
     if (!form.name.trim()) {
@@ -541,22 +560,29 @@ function ItemEditor({ draft, categories, modifierGroups, existingIds, onClose })
       return;
     }
 
-    saveItem({
-      id: draft.isNew ? slugify(form.name, existingIds) : draft.id,
-      categoryId: form.categoryId,
-      name: form.name.trim(),
-      description: form.description.trim(),
-      emoji: form.emoji.trim() || '🍽️',
-      imageId: form.imageId,
-      popular: form.popular,
-      sizes,
-      modifierGroups: form.modifierGroups,
-      // `undefined` removes the restriction entirely rather than storing an
-      // empty array, which `isItemAvailableFor` would read as "sold nowhere".
-      orderTypes: form.collectionOnly ? [ORDER_TYPE.PICKUP] : undefined,
-      badge: form.collectionOnly ? 'Collection only' : undefined,
-      isPublished: draft.isPublished ?? true,
-    });
+    const { ok, error: failure } = await run(() =>
+      saveItem({
+        id: draft.isNew ? slugify(form.name, existingIds) : draft.id,
+        categoryId: form.categoryId,
+        name: form.name.trim(),
+        description: form.description.trim(),
+        emoji: form.emoji.trim() || '🍽️',
+        imageId: form.imageId,
+        popular: form.popular,
+        sizes,
+        modifierGroups: form.modifierGroups,
+        // `null` removes the restriction entirely rather than storing an empty
+        // array, which `isItemAvailableFor` would read as "sold nowhere".
+        // `undefined` would not survive the JSON round-trip to the API.
+        orderTypes: form.collectionOnly ? [ORDER_TYPE.PICKUP] : null,
+        isPublished: draft.isPublished ?? true,
+      }),
+    );
+
+    if (!ok) {
+      setError(failure?.message ?? 'That item could not be saved.');
+      return;
+    }
 
     close();
   }
@@ -740,8 +766,8 @@ function ItemEditor({ draft, categories, modifierGroups, existingIds, onClose })
           <button type="button" onClick={close} className="btn-secondary flex-1">
             Cancel
           </button>
-          <button type="submit" className="btn-primary flex-1">
-            {draft.isNew ? 'Add item' : 'Save changes'}
+          <button type="submit" className="btn-primary flex-1" disabled={busy}>
+            {busy ? 'Saving…' : draft.isNew ? 'Add item' : 'Save changes'}
           </button>
         </div>
       </form>

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAdminAuth, AdminLogin } from './AdminAuth';
+import { useCatalog } from '../context/CatalogContext';
 import { storeConfig } from '../data/store';
 import { getHours, setManualStatus, MANUAL_STATUS, subscribe } from '../lib/repository';
 import { isStoreOpen, isScheduledOpen, formatTime, nextOpenAt } from '../lib/hours';
-import { unacknowledgedOrders } from '../lib/orders';
+import { useOrderFeed } from './useOrderFeed';
 import { armAudio } from '../lib/alerts';
 import mark from '../assets/eat-on-mark.png';
 
@@ -24,6 +25,33 @@ const NAV = [
 export default function AdminLayout() {
   const { isAuthed, status, user, signOut, can } = useAdminAuth();
   const [, setTick] = useState(0);
+
+  // The badge counts orders nobody has opened yet. The count comes from the
+  // API rather than being derived here: the tab can be open on a phone in the
+  // office while the orders arrive on the tablet in the kitchen.
+  const { unacknowledgedCount } = useOrderFeed({
+    scope: 'active',
+    enabled: isAuthed && can('orders.view'),
+  });
+
+  const { error: catalogError, reload: reloadCatalog } = useCatalog();
+
+  /*
+   * The catalog is loaded by the provider above this component, which starts
+   * before the session probe has finished — so on a cold load the admin
+   * endpoints refuse it and the panel would otherwise sit on the seed data
+   * forever. Re-read once, after the sign-in is confirmed.
+   *
+   * The ref is what stops this from becoming a retry loop: a second failure
+   * leaves the banner below, and retrying is then the shop's decision.
+   */
+  const retriedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isAuthed || !catalogError || retriedRef.current) return;
+    retriedRef.current = true;
+    reloadCatalog();
+  }, [isAuthed, catalogError, reloadCatalog]);
 
   // Repository changes and a slow clock both refresh the header state.
   useEffect(() => {
@@ -53,12 +81,15 @@ export default function AdminLayout() {
   const { manualStatus } = getHours();
   const open = isStoreOpen();
   const scheduled = isScheduledOpen();
-  const pending = unacknowledgedOrders().length;
+  const pending = unacknowledgedCount;
   const opensAt = nextOpenAt();
 
   function cycleStatus(next) {
-    setManualStatus(next);
-    setTick((value) => value + 1);
+    // A refused override (a dropped connection, a role without the
+    // permission) must not leave the header claiming a state the shop is not
+    // actually in, so the buttons follow the stored value rather than an
+    // optimistic local one.
+    setManualStatus(next).catch(() => setTick((value) => value + 1));
   }
 
   return (
@@ -148,6 +179,22 @@ export default function AdminLayout() {
           ))}
         </nav>
       </header>
+
+      {catalogError && (
+        <div className="border-b border-chilli-500/30 bg-chilli-500/10">
+          <p className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-2 text-xs text-chilli-500">
+            The menu could not be loaded ({catalogError.message}) — the screens below may be out of
+            date.
+            <button
+              type="button"
+              onClick={reloadCatalog}
+              className="btn-ghost px-2 py-1 text-xs underline"
+            >
+              Retry
+            </button>
+          </p>
+        </div>
+      )}
 
       {manualStatus !== MANUAL_STATUS.AUTO && (
         <div className="border-b border-brand-500/30 bg-brand-500/10">

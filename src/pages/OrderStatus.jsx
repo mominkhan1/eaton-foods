@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getOrder, statusPosition } from '../lib/orders';
-import { subscribe } from '../lib/repository';
 import { ORDER_TYPE, storeConfig } from '../data/store';
 import { formatPence } from '../lib/money';
-import { lineUnitPence } from '../lib/pricing';
 import { formatDateTime } from '../lib/hours';
+
+/** How often the customer's tracking screen re-reads the order. */
+const POLL_MS = 15000;
 
 /**
  * Confirmation + live tracking, same screen.
@@ -15,27 +16,57 @@ import { formatDateTime } from '../lib/hours';
  */
 export default function OrderStatus() {
   const { reference } = useParams();
-  const [order, setOrder] = useState(() => getOrder(reference));
 
-  // The shop advances the status; re-read whenever the store changes, and poll
-  // as a backstop for same-tab updates that raise no `storage` event.
+  // Tagged with the reference it belongs to, so following a link to a
+  // different order never shows the previous one while the new one loads.
+  const [result, setResult] = useState({ reference: null, order: null });
+  const loading = result.reference !== reference;
+  const order = loading ? null : result.order;
+
+  // The kitchen advances the status from its own device, so there is nothing
+  // local to react to — the page has to ask. A failed poll keeps the order on
+  // screen rather than replacing it with an error; the next tick recovers.
   useEffect(() => {
-    const reload = () => setOrder(getOrder(reference));
-    const unsubscribe = subscribe(reload);
-    const id = setInterval(reload, 15000);
+    const controller = new AbortController();
+
+    async function reload() {
+      try {
+        const fresh = await getOrder(reference, { signal: controller.signal });
+        if (!controller.signal.aborted) setResult({ reference, order: fresh });
+      } catch (error) {
+        if (error?.name === 'AbortError' || controller.signal.aborted) return;
+        // Only the first attempt decides "no such order" — a later failure is
+        // the connection, and the order already on screen stays put.
+        setResult((current) =>
+          current.reference === reference ? current : { reference, order: null },
+        );
+      }
+    }
+
+    reload();
+    const id = setInterval(reload, POLL_MS);
 
     return () => {
-      unsubscribe();
+      controller.abort();
       clearInterval(id);
     };
   }, [reference]);
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-20 text-center">
+        <p className="text-sm text-ink-500">Looking up your order…</p>
+      </div>
+    );
+  }
 
   if (!order) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-20 text-center">
         <h1 className="text-3xl text-ink-950">Order not found</h1>
         <p className="mt-2 text-ink-500">
-          We couldn't find order <span className="font-mono">{reference}</span> on this device.
+          We couldn't find order <span className="font-mono">{reference}</span>. Check the
+          reference on your confirmation.
         </p>
         <Link to="/track" className="btn-secondary mt-6">
           Look up another order
@@ -134,11 +165,14 @@ export default function OrderStatus() {
         <h2 className="text-xl text-ink-950">Your order</h2>
 
         <ul className="mt-4 grid gap-3 border-b border-surface-200 pb-4">
-          {order.lines.map((line) => (
-            <li key={line.lineId} className="flex items-start gap-3 text-sm">
+          {order.lines.map((line, index) => (
+            <li key={index} className="flex items-start gap-3 text-sm">
               <span className="tabular-nums text-ink-500">{line.quantity}×</span>
               <span className="min-w-0 flex-1">
                 <span className="block text-ink-800">{line.name}</span>
+                {line.sizeName && line.sizeName !== 'Serve' && (
+                  <span className="block text-xs text-ink-500">{line.sizeName}</span>
+                )}
                 {line.modifiers.length > 0 && (
                   <span className="block text-xs text-ink-500">
                     {line.modifiers.map((modifier) => modifier.optionName).join(' · ')}
@@ -148,9 +182,7 @@ export default function OrderStatus() {
                   <span className="block text-xs italic text-ink-500">“{line.notes}”</span>
                 )}
               </span>
-              <span className="tabular-nums text-ink-800">
-                {formatPence(lineUnitPence(line) * line.quantity)}
-              </span>
+              <span className="tabular-nums text-ink-800">{formatPence(line.totalPence)}</span>
             </li>
           ))}
         </ul>

@@ -10,7 +10,12 @@
  * already written for a customer to read.
  */
 
-const BASE = import.meta.env.VITE_API_BASE ?? '/api';
+/*
+ * `import.meta.env` is Vite's, and is undefined under plain Node — which the
+ * smoke test runs in. It only ever reaches the pure helpers there, never a
+ * request, but the module still has to load.
+ */
+const BASE = import.meta.env?.VITE_API_BASE ?? '/api';
 
 export class ApiError extends Error {
   constructor(code, message, status, extra = {}) {
@@ -174,6 +179,7 @@ export const api = {
     getBanners: (options) => get('/admin/banners', options),
     saveBanner: (banner) => put(`/admin/banners/${encodeURIComponent(banner.id)}`, banner),
     deleteBanner: (id) => del(`/admin/banners/${encodeURIComponent(id)}`),
+    reorderBanners: (orderedIds) => post('/admin/banners/reorder', { orderedIds }),
     saveBannerSettings: (settings) => put('/admin/banner-settings', settings),
 
     savePromo: (promo) => put('/admin/promo', promo),

@@ -115,9 +115,14 @@ export async function requestNotifications() {
 export function notifyNewOrder(order) {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
 
+  // Counted from the lines: the API sends the money totals, not a headcount of
+  // items, and reading a missing `itemCount` would put "undefined items" in
+  // front of the kitchen.
+  const itemCount = (order.lines ?? []).reduce((sum, line) => sum + line.quantity, 0);
+
   try {
     const notification = new Notification(`New ${order.orderType} order — ${order.reference}`, {
-      body: `${order.customer?.name ?? 'Customer'} · ${order.totals.itemCount} items`,
+      body: `${order.customer?.name ?? 'Customer'} · ${itemCount} item${itemCount === 1 ? '' : 's'}`,
       tag: order.reference,
       requireInteraction: false,
     });

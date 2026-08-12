@@ -1,17 +1,21 @@
 /**
  * Revenue reporting.
  *
- * Buckets are cut in the *store's* timezone, not the browser's — a 1am order
- * on a late-night shift belongs to the day the shop calls it, and a report run
- * from another timezone must not shift the totals.
+ * The heavy lifting is SQL: `GET /api/admin/reports` sums and groups in the
+ * database rather than shipping every order to the browser to add up. A year
+ * of trading is a lot of rows to pull onto a tablet, and the totals have to be
+ * the same whichever device asks.
  *
- * Cancelled orders are excluded from revenue everywhere but still counted, so
- * the cancellation rate stays visible.
+ * What is left here is presentation: the endpoint returns one row per trading
+ * day, and this rolls those days up into the weekly and monthly views, filling
+ * the gaps so a quiet day shows as a zero rather than vanishing from the chart.
+ *
+ * Buckets are cut on the shop's own dates — the endpoint groups by local date
+ * for the same reason — so a 1am order on a late-night shift belongs to the
+ * day the shop calls it.
  */
 
-import { ORDER_TYPE } from '../data/store.js';
-import { storeParts, fromStoreWallTime, DAY_NAMES } from './hours.js';
-import { listOrders } from './repository.js';
+import { DAY_NAMES } from './hours.js';
 
 export const GRANULARITY = {
   DAILY: 'daily',
@@ -25,166 +29,123 @@ export const GRANULARITY_LABELS = {
   [GRANULARITY.MONTHLY]: 'Monthly',
 };
 
-/** How many buckets each granularity shows by default. */
-const DEFAULT_BUCKETS = {
+/** How many buckets each granularity shows, and how many days that spans. */
+export const WINDOW_DAYS = {
   [GRANULARITY.DAILY]: 14,
-  [GRANULARITY.WEEKLY]: 12,
-  [GRANULARITY.MONTHLY]: 12,
+  [GRANULARITY.WEEKLY]: 84, // 12 weeks
+  [GRANULARITY.MONTHLY]: 365,
 };
-
-const DAY_MS = 86400000;
 
 function pad(value) {
   return String(value).padStart(2, '0');
 }
 
-/** Store-local midnight that starts the bucket containing `date`. */
-function bucketStart(date, granularity) {
-  const parts = storeParts(date);
-
-  if (granularity === GRANULARITY.MONTHLY) {
-    return fromStoreWallTime(parts.year, parts.month, 1, 0);
-  }
-
-  const midnight = fromStoreWallTime(parts.year, parts.month, parts.day, 0);
-
-  if (granularity === GRANULARITY.WEEKLY) {
-    // ISO weeks start Monday; `isoDay` is 1–7.
-    return new Date(midnight.getTime() - (parts.isoDay - 1) * DAY_MS);
-  }
-
-  return midnight;
+/** 'YYYY-MM-DD' → the parts, without going near a timezone. */
+function parseDateKey(key) {
+  const [year, month, day] = String(key).split('-').map(Number);
+  return { year, month, day };
 }
 
-function bucketKey(date, granularity) {
-  const parts = storeParts(bucketStart(date, granularity));
-
-  if (granularity === GRANULARITY.MONTHLY) return `${parts.year}-${pad(parts.month)}`;
-  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
+function dateKey({ year, month, day }) {
+  return `${year}-${pad(month)}-${pad(day)}`;
 }
 
-function bucketLabel(date, granularity) {
-  const parts = storeParts(date);
-  const month = new Intl.DateTimeFormat('en-GB', { month: 'short' }).format(date);
+/** ISO weekday, 1 = Monday. Computed from the calendar date, not a Date. */
+function isoDayOf({ year, month, day }) {
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return weekday === 0 ? 7 : weekday;
+}
+
+function addDays(parts, days) {
+  const shifted = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days));
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+  };
+}
+
+/** The calendar date that starts the bucket containing `parts`. */
+export function bucketStartOf(parts, granularity) {
+  if (granularity === GRANULARITY.MONTHLY) return { ...parts, day: 1 };
+  if (granularity === GRANULARITY.WEEKLY) return addDays(parts, -(isoDayOf(parts) - 1));
+  return parts;
+}
+
+function bucketLabel(parts, granularity) {
+  const month = new Intl.DateTimeFormat('en-GB', { month: 'short', timeZone: 'UTC' }).format(
+    new Date(Date.UTC(parts.year, parts.month - 1, parts.day)),
+  );
 
   if (granularity === GRANULARITY.MONTHLY) return `${month} ${String(parts.year).slice(2)}`;
   if (granularity === GRANULARITY.WEEKLY) return `${parts.day} ${month}`;
-  return `${DAY_NAMES[parts.isoDay].slice(0, 3)} ${parts.day}`;
+  return `${DAY_NAMES[isoDayOf(parts)].slice(0, 3)} ${parts.day}`;
 }
 
-/** Step back one bucket from a bucket-start instant. */
-function previousBucket(start, granularity) {
+function previousBucketStart(parts, granularity) {
   if (granularity === GRANULARITY.MONTHLY) {
-    const parts = storeParts(start);
-    const month = parts.month === 1 ? 12 : parts.month - 1;
-    const year = parts.month === 1 ? parts.year - 1 : parts.year;
-    return fromStoreWallTime(year, month, 1, 0);
+    return parts.month === 1
+      ? { year: parts.year - 1, month: 12, day: 1 }
+      : { ...parts, month: parts.month - 1 };
+  }
+  return addDays(parts, granularity === GRANULARITY.WEEKLY ? -7 : -1);
+}
+
+/**
+ * The date range to request for a granularity, as 'YYYY-MM-DD' strings.
+ *
+ * Runs back from today so the newest bucket is the one in progress, which is
+ * what the shop is actually looking at.
+ */
+export function reportRange(granularity, today = new Date()) {
+  const to = {
+    year: today.getFullYear(),
+    month: today.getMonth() + 1,
+    day: today.getDate(),
+  };
+
+  return { from: dateKey(addDays(to, -(WINDOW_DAYS[granularity] - 1))), to: dateKey(to) };
+}
+
+/**
+ * Roll the endpoint's daily rows up into buckets.
+ *
+ * `daily` is `[{ date, orders, revenuePence }]` as returned by the API.
+ */
+export function buildReport({ granularity = GRANULARITY.DAILY, daily = [], today = new Date() }) {
+  const bucketCount =
+    granularity === GRANULARITY.DAILY ? 14 : granularity === GRANULARITY.WEEKLY ? 12 : 12;
+
+  // Walk back from the current bucket so the range is continuous.
+  const starts = [];
+  let cursor = bucketStartOf(
+    { year: today.getFullYear(), month: today.getMonth() + 1, day: today.getDate() },
+    granularity,
+  );
+
+  for (let index = 0; index < bucketCount; index += 1) {
+    starts.unshift(cursor);
+    cursor = previousBucketStart(cursor, granularity);
   }
 
-  const days = granularity === GRANULARITY.WEEKLY ? 7 : 1;
-  // Re-derive from wall time so a DST shift doesn't drift the boundary.
-  return bucketStart(new Date(start.getTime() - days * DAY_MS + DAY_MS / 2), granularity);
-}
-
-function emptyBucket(start, granularity) {
-  return {
-    key: bucketKey(start, granularity),
+  const buckets = starts.map((start) => ({
+    key: dateKey(start),
     label: bucketLabel(start, granularity),
     start,
     revenue: 0,
     orders: 0,
-    delivery: 0,
-    collection: 0,
-    deliveryRevenue: 0,
-    collectionRevenue: 0,
-    cancelled: 0,
-    discount: 0,
-  };
-}
+  }));
 
-export function isCounted(order) {
-  return order.status !== 'cancelled';
-}
-
-/**
- * Bucketed series plus headline totals.
- *
- * `buckets` always spans a continuous range ending at the current bucket, so
- * quiet days appear as zeroes rather than vanishing from the chart.
- */
-export function buildReport({
-  granularity = GRANULARITY.DAILY,
-  bucketCount,
-  orders = listOrders(),
-  now = new Date(),
-} = {}) {
-  const count = bucketCount ?? DEFAULT_BUCKETS[granularity];
-
-  // Walk back from the current bucket to build the continuous range.
-  const starts = [];
-  let cursor = bucketStart(now, granularity);
-  for (let index = 0; index < count; index += 1) {
-    starts.unshift(cursor);
-    cursor = previousBucket(cursor, granularity);
-  }
-
-  const buckets = starts.map((start) => emptyBucket(start, granularity));
   const byKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
 
-  const earliest = starts[0].getTime();
-
-  const totals = {
-    revenue: 0,
-    orders: 0,
-    delivery: 0,
-    collection: 0,
-    deliveryRevenue: 0,
-    collectionRevenue: 0,
-    cancelled: 0,
-    discount: 0,
-    items: 0,
-  };
-
-  for (const order of orders) {
-    const placed = new Date(order.placedAt);
-    if (Number.isNaN(placed.getTime()) || placed.getTime() < earliest) continue;
-
-    const bucket = byKey.get(bucketKey(placed, granularity));
+  for (const row of daily) {
+    const bucket = byKey.get(dateKey(bucketStartOf(parseDateKey(row.date), granularity)));
     if (!bucket) continue;
 
-    if (!isCounted(order)) {
-      bucket.cancelled += 1;
-      totals.cancelled += 1;
-      continue;
-    }
-
-    const revenue = order.totals?.total ?? 0;
-    const isDelivery = order.orderType === ORDER_TYPE.DELIVERY;
-
-    bucket.revenue += revenue;
-    bucket.orders += 1;
-    bucket.discount += order.totals?.discount ?? 0;
-    totals.revenue += revenue;
-    totals.orders += 1;
-    totals.discount += order.totals?.discount ?? 0;
-    totals.items += order.totals?.itemCount ?? 0;
-
-    if (isDelivery) {
-      bucket.delivery += 1;
-      bucket.deliveryRevenue += revenue;
-      totals.delivery += 1;
-      totals.deliveryRevenue += revenue;
-    } else {
-      bucket.collection += 1;
-      bucket.collectionRevenue += revenue;
-      totals.collection += 1;
-      totals.collectionRevenue += revenue;
-    }
+    bucket.revenue += row.revenuePence ?? 0;
+    bucket.orders += row.orders ?? 0;
   }
 
-  totals.averageOrderValue = totals.orders > 0 ? Math.round(totals.revenue / totals.orders) : 0;
-
-  // Compare the newest complete-so-far bucket with the one before it.
   const current = buckets[buckets.length - 1];
   const previous = buckets[buckets.length - 2];
   const change =
@@ -195,40 +156,12 @@ export function buildReport({
   return {
     granularity,
     buckets,
-    totals,
     current,
     previous,
     changePercent: change,
-    peak: buckets.reduce((best, bucket) => (bucket.revenue > best.revenue ? bucket : best), buckets[0]),
+    peak: buckets.reduce(
+      (best, bucket) => (bucket.revenue > best.revenue ? bucket : best),
+      buckets[0],
+    ),
   };
-}
-
-/** Best sellers across the reporting window, by units sold. */
-export function topItems({ orders = listOrders(), since = null, limit = 8 } = {}) {
-  const tally = new Map();
-
-  for (const order of orders) {
-    if (!isCounted(order)) continue;
-    if (since && new Date(order.placedAt).getTime() < since.getTime()) continue;
-
-    for (const line of order.lines ?? []) {
-      const existing = tally.get(line.itemId) ?? {
-        itemId: line.itemId,
-        name: line.name,
-        emoji: line.emoji,
-        imageId: line.imageId ?? null,
-        quantity: 0,
-        revenue: 0,
-      };
-
-      const unit =
-        line.sizePence + (line.modifiers ?? []).reduce((sum, m) => sum + m.pricePence, 0);
-
-      existing.quantity += line.quantity;
-      existing.revenue += unit * line.quantity;
-      tally.set(line.itemId, existing);
-    }
-  }
-
-  return [...tally.values()].sort((a, b) => b.quantity - a.quantity).slice(0, limit);
 }

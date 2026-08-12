@@ -8,6 +8,7 @@ import {
 import { describeGroupRule } from '../data/menu';
 import { slugify } from '../lib/slug';
 import { toPence, formatPence } from '../lib/money';
+import { useAdminAction } from './useAdminAction';
 
 /**
  * Option-group manager.
@@ -17,6 +18,7 @@ import { toPence, formatPence } from '../lib/money';
  */
 export default function AdminOptionGroups() {
   const { modifierGroups, allItems } = useCatalog();
+  const { run, busy, error } = useAdminAction();
   const [draft, setDraft] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -27,8 +29,11 @@ export default function AdminOptionGroups() {
     return allItems.filter((item) => (item.modifierGroups ?? []).includes(groupId));
   }
 
-  function onDelete(group) {
-    const result = deleteModifierGroup(group.id);
+  async function onDelete(group) {
+    setNotice(null);
+
+    const { ok, result } = await run(() => deleteModifierGroup(group.id));
+    if (!ok) return;
 
     if (!result.ok) {
       // Offer the detach-and-delete path rather than dead-ending.
@@ -39,10 +44,13 @@ export default function AdminOptionGroups() {
     setNotice(`Deleted “${group.name}”.`);
   }
 
-  function forceDelete() {
+  async function forceDelete() {
     const { group } = confirmDelete;
-    const result = deleteModifierGroup(group.id, { force: true });
+
+    const { ok, result } = await run(() => deleteModifierGroup(group.id, { force: true }));
     setConfirmDelete(null);
+    if (!ok) return;
+
     setNotice(
       `Deleted “${group.name}” and removed it from ${result.detachedFrom} item${
         result.detachedFrom === 1 ? '' : 's'
@@ -74,6 +82,10 @@ export default function AdminOptionGroups() {
           + Option group
         </button>
       </div>
+
+      {error && (
+        <p className="mt-4 rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">{error}</p>
+      )}
 
       {notice && (
         <p className="mt-4 rounded-xl bg-surface-50 px-4 py-3 text-sm text-ink-500">{notice}</p>
@@ -120,7 +132,8 @@ export default function AdminOptionGroups() {
                     <button
                       type="button"
                       onClick={() => onDelete(group)}
-                      className="btn-ghost px-3 py-1.5 text-xs hover:text-chilli-500"
+                      disabled={busy}
+                      className="btn-ghost px-3 py-1.5 text-xs hover:text-chilli-500 disabled:opacity-40"
                     >
                       Delete
                     </button>
@@ -206,8 +219,13 @@ export default function AdminOptionGroups() {
               >
                 Keep it
               </button>
-              <button type="button" onClick={forceDelete} className="btn-primary flex-1">
-                Delete anyway
+              <button
+                type="button"
+                onClick={forceDelete}
+                disabled={busy}
+                className="btn-primary flex-1"
+              >
+                {busy ? 'Deleting…' : 'Delete anyway'}
               </button>
             </div>
           </>
@@ -218,6 +236,7 @@ export default function AdminOptionGroups() {
 }
 
 function GroupEditor({ draft, existingIds, onClose, onSaved }) {
+  const { run, busy } = useAdminAction();
   const [form, setForm] = useState(null);
   const [error, setError] = useState(null);
 
@@ -260,7 +279,7 @@ function GroupEditor({ draft, existingIds, onClose, onSaved }) {
   const max = Number(form.max);
   const preview = describeGroupRule({ min, max });
 
-  function onSubmit(event) {
+  async function onSubmit(event) {
     event.preventDefault();
 
     if (!form.name.trim()) {
@@ -311,7 +330,15 @@ function GroupEditor({ draft, existingIds, onClose, onSaved }) {
     }
 
     const id = draft.isNew ? slugify(form.name, existingIds, 'group') : draft.id;
-    saveModifierGroup({ id, name: form.name.trim(), min, max, options });
+
+    const { ok, error: failure } = await run(() =>
+      saveModifierGroup({ id, name: form.name.trim(), min, max, options }),
+    );
+
+    if (!ok) {
+      setError(failure?.message ?? 'That option group could not be saved.');
+      return;
+    }
 
     onSaved?.(form.name.trim());
     close();
@@ -452,8 +479,8 @@ function GroupEditor({ draft, existingIds, onClose, onSaved }) {
           <button type="button" onClick={close} className="btn-secondary flex-1">
             Cancel
           </button>
-          <button type="submit" className="btn-primary flex-1">
-            {draft.isNew ? 'Create group' : 'Save changes'}
+          <button type="submit" className="btn-primary flex-1" disabled={busy}>
+            {busy ? 'Saving…' : draft.isNew ? 'Create group' : 'Save changes'}
           </button>
         </div>
       </form>

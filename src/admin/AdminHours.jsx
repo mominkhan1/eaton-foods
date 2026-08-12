@@ -4,11 +4,11 @@ import {
   saveShifts,
   saveClosedDates,
   setManualStatus,
-  resetHours,
   MANUAL_STATUS,
 } from '../lib/repository';
 import { DAY_NAMES, isScheduledOpen, isStoreOpen, nextOpenAt, formatTime } from '../lib/hours';
 import { useCatalog } from '../context/CatalogContext';
+import { useAdminAction } from './useAdminAction';
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7];
 
@@ -29,6 +29,7 @@ export default function AdminHours() {
   // `version` from the catalog context re-renders this on any repository write.
   useCatalog();
 
+  const { run, busy, error } = useAdminAction();
   const { shifts, closedDates, manualStatus } = getHours();
   const [notice, setNotice] = useState(null);
   const [newDate, setNewDate] = useState('');
@@ -40,8 +41,8 @@ export default function AdminHours() {
         ? { ...shift, ...patch }
         : shift,
     );
-    saveShifts(next);
     setNotice(null);
+    return run(() => saveShifts(next));
   }
 
   function updateTime(shift, field, value) {
@@ -62,21 +63,34 @@ export default function AdminHours() {
   }
 
   function addShift(day) {
-    saveShifts([...shifts, { day, start: 12 * 3600, end: 22 * 3600, noDelivery: false, noPickup: false }]);
+    return run(() =>
+      saveShifts([
+        ...shifts,
+        { day, start: 12 * 3600, end: 22 * 3600, noDelivery: false, noPickup: false },
+      ]),
+    );
   }
 
   function removeShift(target) {
-    saveShifts(
-      shifts.filter(
-        (shift) => !(shift.day === target.day && shift.start === target.start && shift.end === target.end),
+    return run(() =>
+      saveShifts(
+        shifts.filter(
+          (shift) =>
+            !(shift.day === target.day && shift.start === target.start && shift.end === target.end),
+        ),
       ),
     );
   }
 
-  function addClosedDate(event) {
+  async function addClosedDate(event) {
     event.preventDefault();
     if (!newDate) return;
-    saveClosedDates([...closedDates, { date: newDate, reason: newReason.trim() || 'Closed' }]);
+
+    const { ok } = await run(() =>
+      saveClosedDates([...closedDates, { date: newDate, reason: newReason.trim() || 'Closed' }]),
+    );
+    if (!ok) return;
+
     setNewDate('');
     setNewReason('');
   }
@@ -108,21 +122,21 @@ export default function AdminHours() {
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           <OverrideCard
             active={manualStatus === MANUAL_STATUS.AUTO}
-            onClick={() => setManualStatus(MANUAL_STATUS.AUTO)}
+            onClick={() => run(() => setManualStatus(MANUAL_STATUS.AUTO))}
             title="Follow the schedule"
             body="Normal operation — the times below decide."
             icon="🗓️"
           />
           <OverrideCard
             active={manualStatus === MANUAL_STATUS.OPEN}
-            onClick={() => setManualStatus(MANUAL_STATUS.OPEN)}
+            onClick={() => run(() => setManualStatus(MANUAL_STATUS.OPEN))}
             title="Force open"
             body="Take orders even outside the schedule."
             icon="🟢"
           />
           <OverrideCard
             active={manualStatus === MANUAL_STATUS.CLOSED}
-            onClick={() => setManualStatus(MANUAL_STATUS.CLOSED)}
+            onClick={() => run(() => setManualStatus(MANUAL_STATUS.CLOSED))}
             title="Force closed"
             body="Stop new orders now — kitchen backed up, fryer down."
             icon="🔴"
@@ -130,8 +144,10 @@ export default function AdminHours() {
         </div>
       </section>
 
-      {notice && (
-        <p className="mt-4 rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">{notice}</p>
+      {(notice || error) && (
+        <p className="mt-4 rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">
+          {notice ?? error}
+        </p>
       )}
 
       <section className="card mt-4 overflow-hidden">
@@ -250,9 +266,12 @@ export default function AdminHours() {
               <button
                 type="button"
                 onClick={() =>
-                  saveClosedDates(closedDates.filter((entry) => entry.date !== closed.date))
+                  run(() =>
+                    saveClosedDates(closedDates.filter((entry) => entry.date !== closed.date)),
+                  )
                 }
-                className="btn-ghost ml-auto px-2 py-1 text-xs hover:text-chilli-500"
+                disabled={busy}
+                className="btn-ghost ml-auto px-2 py-1 text-xs hover:text-chilli-500 disabled:opacity-40"
               >
                 Remove
               </button>
@@ -275,24 +294,15 @@ export default function AdminHours() {
             placeholder="Reason (e.g. Christmas Day)"
             aria-label="Closure reason"
           />
-          <button type="submit" className="btn-secondary px-4 py-2 text-sm" disabled={!newDate}>
+          <button
+            type="submit"
+            className="btn-secondary px-4 py-2 text-sm"
+            disabled={!newDate || busy}
+          >
             Add closure
           </button>
         </form>
       </section>
-
-      <div className="mt-8 border-t border-surface-200 pt-5">
-        <button
-          type="button"
-          onClick={() => {
-            resetHours();
-            setNotice(null);
-          }}
-          className="btn-ghost px-0 text-xs hover:text-chilli-500"
-        >
-          Reset hours to the seed schedule
-        </button>
-      </div>
     </div>
   );
 }

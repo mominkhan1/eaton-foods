@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getOrder, listOrders } from '../lib/orders';
+import { getOrder, recentOrderRefs } from '../lib/orders';
 import { formatDateTime } from '../lib/hours';
 import { formatPence } from '../lib/money';
 
@@ -8,18 +8,29 @@ export default function TrackOrder() {
   const navigate = useNavigate();
   const [reference, setReference] = useState('');
   const [error, setError] = useState(null);
-  const recent = listOrders().slice(0, 5);
+  const [checking, setChecking] = useState(false);
 
-  function onSubmit(event) {
+  // References this browser has placed. Kept locally because there is no
+  // customer login — an endpoint that listed orders by phone number would be
+  // a way to read somebody else's.
+  const [recent] = useState(recentOrderRefs);
+
+  async function onSubmit(event) {
     event.preventDefault();
-    const order = getOrder(reference);
+    setChecking(true);
+    setError(null);
 
-    if (!order) {
-      setError("We couldn't find that reference on this device.");
-      return;
+    try {
+      const order = await getOrder(reference.trim().toUpperCase());
+      navigate(`/order/${order.reference}`);
+    } catch (caught) {
+      setError(
+        caught?.status === 404
+          ? "We couldn't find an order with that reference."
+          : (caught?.message ?? 'We could not look that up. Please try again.'),
+      );
+      setChecking(false);
     }
-
-    navigate(`/order/${order.reference}`);
   }
 
   return (
@@ -40,8 +51,12 @@ export default function TrackOrder() {
           placeholder="EF-XXXXXX"
           aria-label="Order reference"
         />
-        <button type="submit" className="btn-primary shrink-0" disabled={!reference.trim()}>
-          Track
+        <button
+          type="submit"
+          className="btn-primary shrink-0"
+          disabled={!reference.trim() || checking}
+        >
+          {checking ? 'Checking…' : 'Track'}
         </button>
       </form>
 
@@ -60,12 +75,11 @@ export default function TrackOrder() {
                   <span className="flex-1">
                     <span className="block font-mono text-sm text-brand-600">{order.reference}</span>
                     <span className="block text-xs text-ink-500">
-                      {formatDateTime(new Date(order.placedAt))} ·{' '}
-                      {order.orderType === 'delivery' ? 'Delivery' : 'Collection'}
+                      {formatDateTime(new Date(order.placedAt))}
                     </span>
                   </span>
                   <span className="text-sm tabular-nums text-ink-800">
-                    {formatPence(order.totals.total)}
+                    {formatPence(order.total)}
                   </span>
                 </Link>
               </li>

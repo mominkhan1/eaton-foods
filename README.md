@@ -58,19 +58,27 @@ patterns that make modals reset unpredictably.
 | **Reports** | Revenue on **daily / weekly / monthly** filters — KPI tiles, a column chart, a full breakdown table and best sellers. |
 
 Edits are live: change the menu or flip the shop closed and the storefront
-updates immediately, including in another browser tab.
+picks it up on its next load, on every device.
 
-### ⚠️ The admin panel needs a backend to be real
+### Where the data lives
 
-`localStorage` is **per-browser**. The panel therefore only sees orders placed
-in the *same browser* — a customer ordering from their phone will never appear
-on the shop's screen. Everything mutable goes through
-[src/lib/repository.js](src/lib/repository.js), so pointing it at an API means
-reimplementing the read/write pairs in that one file.
+Everything mutable — the menu, option groups, trading hours, hero slides, the
+coupon, photos and orders — is stored in **MySQL** and read and written through
+the PHP API in [server/api/](server/api/). Nothing that a customer needs to see
+is kept in the browser.
 
-The passcode gate in [src/admin/AdminAuth.jsx](src/admin/AdminAuth.jsx) is
-**not authentication** — the code is compared in the browser and readable by
-anyone. It must become a server session, with every write authorised server-side.
+[src/lib/repository.js](src/lib/repository.js) is the only module that talks to
+the catalog endpoints. It holds the API's response in memory and hands it out
+synchronously, because the whole render tree asks for the menu during render;
+writes are async and re-read what the server actually stored. Orders do not go
+through it at all — they are fetched per screen, since the kitchen list and a
+customer's own order have nothing in common but the shape.
+
+Two things are still browser-local on purpose, and neither is a source of
+truth: the basket, and the list of order references *this* browser has placed
+(the "recent orders" convenience on the tracking page — there is no customer
+login, and an endpoint that listed orders by phone number would be a way to
+read somebody else's).
 
 ### Option groups
 
@@ -120,16 +128,28 @@ Categories and items each take an uploaded photo, which then appears on the
 storefront cards, category headers, the item modal, the basket, and the
 kitchen's order list. Drag-and-drop or browse, on **Menu → Categories & items**.
 
-**Where they're stored.** IndexedDB, not `localStorage` — the latter holds
-about 5MB of *strings*, so base64-encoding a couple of phone photos would blow
-the whole quota and take the menu and orders down with it. IndexedDB stores
-Blobs natively with far more room.
+**Where they're stored.** On the server, under `public/uploads/`, with a row in
+the `images` table. The API returns each photo's public URL alongside its id
+everywhere an id appears — in the catalog, in the banners, in the upload
+response — so the browser never has to look one up or guess a filename.
 
-**Every upload is downscaled in the browser before it is stored** — capped at
+**Every upload is downscaled in the browser before it is sent** — capped at
 900px on the long edge and re-encoded to WebP (JPEG on older Safari). A phone
-camera produces 4–8MB files; a menu card renders at roughly 200px, so storing
-the original would be ~40× more bytes than anyone can see. The field reports
-the saved dimensions and size so the shop can see what happened.
+camera produces 4–8MB files; a menu card renders at roughly 200px, so sending
+the original would be ~40× more bytes than anyone can see, over a shop's
+uplink. The field reports the saved dimensions and size so the shop can see
+what happened.
+
+The server validates independently — it decides the type by inspecting the
+bytes, never from the filename or the declared content type, and generates the
+stored name itself. A `.jpg` that is really a `.php` is the classic way to get
+code execution on shared hosting.
+
+**Deleting a photo is refused while anything still points at it**, because the
+foreign keys are `ON DELETE SET NULL` and a delete would otherwise succeed and
+silently blank a menu card. Replacing one uploads first and only removes the
+old file once the record points at the new one, so a failed upload never
+destroys the existing picture.
 
 **The emoji is the fallback, not a placeholder.** A shop will always have items
 it hasn't photographed, and an empty grey box looks broken in a way an emoji
@@ -185,7 +205,9 @@ The reference platform models a menu as **category → item → sizes[]**, where
 
 | Concern | File |
 |---|---|
-| **All mutable state (swap this for an API)** | [src/lib/repository.js](src/lib/repository.js) |
+| **Catalog, hours, banners, promo — the API-backed store** | [src/lib/repository.js](src/lib/repository.js) |
+| The only module that talks to the API | [src/lib/api.js](src/lib/api.js) |
+| Server: routing, catalog, orders, settings | [server/api/](server/api/) |
 | Store details, fees, promo (static config) | [src/data/store.js](src/data/store.js) |
 | Menu seed data + pure helpers | [src/data/menu.js](src/data/menu.js) |
 | Live catalog + hours for the UI | [src/context/CatalogContext.jsx](src/context/CatalogContext.jsx) |
@@ -193,9 +215,9 @@ The reference platform models a menu as **category → item → sizes[]**, where
 | Delivery geofence, postcodes | [src/lib/geo.js](src/lib/geo.js) |
 | Totals, surcharges, promo | [src/lib/pricing.js](src/lib/pricing.js) |
 | Order placement, status | [src/lib/orders.js](src/lib/orders.js) |
-| Revenue bucketing, best sellers | [src/lib/reports.js](src/lib/reports.js) |
+| Report windows, weekly/monthly roll-up | [src/lib/reports.js](src/lib/reports.js) |
 | Chime, tab flash, notifications | [src/lib/alerts.js](src/lib/alerts.js) |
-| Photo storage, downscaling, pruning | [src/lib/images.js](src/lib/images.js) |
+| Photo upload, downscaling, URL lookup | [src/lib/images.js](src/lib/images.js) |
 | Hero slides + rotation settings | [src/data/banners.js](src/data/banners.js) |
 | Hero button link routing | [src/lib/links.js](src/lib/links.js) |
 
@@ -246,25 +268,30 @@ Two things the printed board does not settle:
 
 These are deliberate stubs, each isolated to one function:
 
-- **The backend.** The single biggest gap. Orders, menu and hours all live in
-  the browser, so the admin panel cannot see a customer's order placed on their
-  own device. Everything routes through
-  [src/lib/repository.js](src/lib/repository.js) to make this swap contained.
-- **Admin authentication.** The passcode is checked client-side. Not security.
-- **Payments.** `placeOrder()` writes to `localStorage`. Swap it for the API
-  call; nothing else changes. You will need your own Adyen/Stripe merchant
-  accounts — do not reuse any keys from the reference site.
+- **Card capture.** Orders reach the kitchen and can be tracked, but nothing
+  takes the money yet: an order is written with `payment_status = 'pending'`.
+  The Stripe payment-intent endpoint and webhook exist
+  ([server/api/routes/](server/api/routes/)) and the checkout does not call
+  them. Note that **reports count only paid orders**, so until this is
+  connected the revenue figures stay at zero while orders accumulate. You will
+  need your own Stripe merchant account — do not reuse any keys from the
+  reference site.
 - **Geocoding.** `geocodePostcodeStub()` derives a stable pseudo-location near
   the shop so the radius check has something to work against in development.
-  Replace with a real geocoder.
-- **Driver tracking.** The status timeline advances on a clock. The real system
-  gets this pushed from the POS.
-- **Accounts.** No login. Customer details are remembered in `localStorage`.
-- **Image hosting.** Photos live in the visitor's own IndexedDB, so an upload
-  made on the shop's laptop is invisible on every other device. On a server,
-  `putImageBlob` becomes an upload returning a URL and `getImageUrl` returns it
-  directly — the browser-side downscaling is worth keeping either way, since it
-  happens before the bytes leave the device.
+  Replace with a real geocoder. The delivery area is currently decided by
+  postcode district, which does not depend on it.
+- **Driver tracking.** The status timeline is advanced by hand from the kitchen
+  screen. The real system gets this pushed from the POS.
+- **Customer accounts.** No login. Details are remembered in `localStorage`,
+  and the tracking page's "recent orders" is this browser's own list of
+  references — deliberately not a server lookup, since without a login an
+  endpoint that listed orders by phone number would be a way to read
+  somebody else's.
+- **Store configuration.** `storeConfig` and `orderSetup` in
+  [src/data/store.js](src/data/store.js) are still static in the front end. The
+  API serves them at `/api/config` and there is no admin screen that edits
+  them, so the two copies are kept in step by hand — the defaults in
+  [server/api/lib/settings.php](server/api/lib/settings.php) mirror that file.
 
 ## Configuring for a different shop
 

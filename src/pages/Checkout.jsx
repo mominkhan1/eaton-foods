@@ -10,7 +10,7 @@ import { ORDER_TYPE, orderSetup, storeConfig } from '../data/store';
 import { formatPence } from '../lib/money';
 import { lineUnitPence } from '../lib/pricing';
 import { formatDateTime, formatTime } from '../lib/hours';
-import { placeOrder } from '../lib/orders';
+import { placeOrder, rememberOrder } from '../lib/orders';
 
 const CUSTOMER_KEY = 'eaton.customer.v1';
 
@@ -70,11 +70,12 @@ export default function Checkout() {
     return Object.keys(next).length === 0;
   }
 
-  function onSubmit(event) {
+  async function onSubmit(event) {
     event.preventDefault();
-    if (!validate() || !canCheckout) return;
+    if (!validate() || !canCheckout || submitting) return;
 
     setSubmitting(true);
+    setErrors({});
 
     const customer = { name: name.trim(), phone: phone.trim(), email: email.trim() };
     try {
@@ -83,17 +84,33 @@ export default function Checkout() {
       // Not worth blocking the order over.
     }
 
-    // Stands in for the payment authorisation round-trip.
-    const order = placeOrder({
-      lines,
-      totals,
-      orderType,
-      timing,
-      address: deliveryAddress,
-      customer,
-      promoCode,
-    });
+    let order;
+    try {
+      order = await placeOrder({
+        lines,
+        orderType,
+        timing,
+        address: deliveryAddress,
+        customer,
+        promoCode,
+      });
+    } catch (error) {
+      setSubmitting(false);
 
+      // The server re-checks everything the browser checked, so a refusal here
+      // usually means the shop changed something while the basket sat open —
+      // an item came off the menu, or a price moved. The basket is deliberately
+      // left intact so the customer can fix it rather than start again.
+      setErrors({
+        submit:
+          error?.code === 'outside_delivery_area'
+            ? error.message
+            : (error?.message ?? 'We could not place that order. Please try again.'),
+      });
+      return;
+    }
+
+    rememberOrder(order);
     clear();
     navigate(`/order/${order.reference}`, { replace: true });
   }
@@ -233,8 +250,8 @@ export default function Checkout() {
             </div>
 
             <p className="mt-4 rounded-xl bg-surface-0 px-4 py-3 text-xs text-ink-500">
-              Payments are not wired up yet — placing an order here records it locally so you can
-              see the confirmation and tracking screens.
+              Card capture is not wired up yet — the order reaches the kitchen and you can track
+              it, but payment is settled in person for now.
             </p>
           </section>
         </div>
@@ -277,6 +294,12 @@ export default function Checkout() {
             <p className="mt-3 rounded-xl bg-chilli-500/10 px-4 py-3 text-xs text-chilli-500">
               Delivery minimum is £{orderSetup.minimumDeliveryOrder.toFixed(2)} — add{' '}
               {formatPence(totals.minimumShortfall)} more.
+            </p>
+          )}
+
+          {errors.submit && (
+            <p className="mt-3 rounded-xl bg-chilli-500/10 px-4 py-3 text-xs text-chilli-500">
+              {errors.submit}
             </p>
           )}
 

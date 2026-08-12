@@ -4,6 +4,9 @@ import {
   getHours,
   getBanners,
   getPromo,
+  hydrate,
+  isHydrated,
+  getHydrationError,
   subscribe,
 } from '../lib/repository';
 import {
@@ -16,15 +19,37 @@ import { isBannerRenderable } from '../data/banners';
 const CatalogContext = createContext(null);
 
 /**
- * Live view of the menu and trading hours.
+ * Live view of the menu, trading hours, banners and coupon.
  *
- * Subscribes to the repository, so an edit in the admin panel — including one
- * made in another browser tab — re-renders the customer site immediately.
+ * Loads once from the API and then subscribes to the repository, so an edit in
+ * the admin panel re-renders the customer site as soon as the write comes
+ * back. `admin` asks for unpublished rows as well — the panel manages hidden
+ * items and the storefront must never see them.
  */
-export function CatalogProvider({ children }) {
+export function CatalogProvider({ children, admin = false }) {
   const [version, setVersion] = useState(0);
+  const [loading, setLoading] = useState(() => !isHydrated());
 
   useEffect(() => subscribe(() => setVersion((current) => current + 1)), []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    // `hydrate` resolves either way — it reports a failure through
+    // getHydrationError() rather than rejecting, so the screen can show it
+    // with a retry. Only an abort rejects, and that means we are unmounting.
+    hydrate({ admin, signal: controller.signal })
+      .then(() => setLoading(false))
+      .catch(() => {});
+
+    return () => controller.abort();
+  }, [admin]);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    await hydrate({ admin });
+    setLoading(false);
+  }, [admin]);
 
   const catalog = getCatalog();
   const hours = getHours();
@@ -51,11 +76,15 @@ export function CatalogProvider({ children }) {
       bannerSettings: bannerState.settings,
       promo,
       version,
+
+      loading,
+      error: getHydrationError(),
+      reload,
     };
-    // `version` is the invalidation signal — catalog/hours are mutable module
-    // state, so they are not reliable dependencies on their own.
+    // `version` is the invalidation signal — the snapshot is mutable module
+    // state, so catalog/hours are not reliable dependencies on their own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version]);
+  }, [version, loading, reload]);
 
   return <CatalogContext.Provider value={value}>{children}</CatalogContext.Provider>;
 }

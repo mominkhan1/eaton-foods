@@ -3,12 +3,17 @@
  *
  * Covers the rules that are easy to get quietly wrong: late-night trading
  * hours, the manual open/close override, the delivery geofence, the
- * surcharge/promo/free-delivery maths, catalog edits, and revenue bucketing.
+ * surcharge/promo/free-delivery maths, image handling, and revenue bucketing.
  *
  *   node scripts/smoke.mjs
  *
- * The repository falls back to an in-memory store when `localStorage` is
- * absent, so this runs in plain Node with no shims.
+ * WHAT THIS DOES NOT COVER. The catalog, banners, hours and coupon are stored
+ * in MySQL and written through the API, so the rules about *persistence* —
+ * refusing to delete a category that still has items, replacing an item's
+ * sizes wholesale, renumbering slides — are enforced in PHP and cannot be
+ * exercised from Node. This file drives the client-side snapshot directly with
+ * `applyCatalog` and friends, which is what the API responses feed, and tests
+ * the reasoning layered on top of it.
  */
 
 import assert from 'node:assert/strict';
@@ -45,43 +50,26 @@ import { slugify } from '../src/lib/slug.js';
 import {
   fitWithin,
   validateSourceFile,
-  generateImageId,
   formatBytes,
-  putImageBlob,
-  getImageBlob,
-  deleteImage,
-  listImageIds,
-  pruneImages,
+  registerImageUrls,
+  getImageUrl,
+  clearImageUrls,
   IMAGE_ERRORS,
   MAX_SOURCE_BYTES,
 } from '../src/lib/images.js';
 import {
   getCatalog,
-  saveCategory,
-  deleteCategory,
-  saveItem,
-  deleteItem,
-  setItemPublished,
-  saveModifierGroup,
-  deleteModifierGroup,
-  itemsUsingModifierGroup,
-  resetCatalog,
-  setManualStatus,
-  saveShifts,
-  resetHours,
   getHours,
-  MANUAL_STATUS,
   getBanners,
-  saveBanner,
-  deleteBanner,
-  setBannerPublished,
-  moveBanner,
-  saveBannerSettings,
-  resetBanners,
-  allReferencedImageIds,
   getPromo,
-  savePromo,
-  resetPromo,
+  applyCatalog,
+  applyHours,
+  applyBanners,
+  applyPromo,
+  itemsUsingModifierGroup,
+  allReferencedImageIds,
+  resetToSeed,
+  MANUAL_STATUS,
 } from '../src/lib/repository.js';
 import {
   isBannerRenderable,
@@ -92,7 +80,7 @@ import {
 } from '../src/data/banners.js';
 import { isBrowserHref, isExternalHref, hasLink } from '../src/lib/links.js';
 import { statusStepsFor, nextStatusFor, statusPosition } from '../src/lib/orders.js';
-import { buildReport, topItems, GRANULARITY } from '../src/lib/reports.js';
+import { buildReport, reportRange, GRANULARITY } from '../src/lib/reports.js';
 
 let passed = 0;
 const failures = [];
@@ -108,17 +96,16 @@ function test(name, fn) {
   }
 }
 
-/** Async variant, awaited via the queue at the end of the file. */
-const asyncTests = [];
-function testAsync(name, fn) {
-  asyncTests.push({ name, fn });
-}
-
 function section(title) {
   console.log(`\n${title}`);
 }
 
 const findSeedItem = (id) => seedMenuItems.find((item) => item.id === id);
+
+/** Put the store into a known state, the way an API response would. */
+function setManualStatus(manualStatus) {
+  applyHours({ ...getHours(), manualStatus });
+}
 
 // ── Trading hours ──────────────────────────────────────────────────────────
 section('Trading hours');
@@ -201,11 +188,14 @@ test('edited shifts take effect immediately', () => {
   const nineAm = fromStoreWallTime(2026, 8, 12, 9 * 3600);
   assert.equal(isStoreOpen(nineAm), false, 'closed at 9am by default');
 
-  saveShifts([{ day: 3, start: 8 * 3600, end: 23 * 3600, noDelivery: false, noPickup: false }]);
+  applyHours({
+    ...getHours(),
+    shifts: [{ day: 3, start: 8 * 3600, end: 23 * 3600, noDelivery: false, noPickup: false }],
+  });
   assert.equal(isStoreOpen(nineAm), true, 'now open at 9am on Wednesday');
 
-  resetHours();
-  assert.equal(isStoreOpen(nineAm), false, 'reset restores the seed schedule');
+  resetToSeed();
+  assert.equal(isStoreOpen(nineAm), false, 'back to the seed schedule');
   assert.equal(getHours().manualStatus, MANUAL_STATUS.AUTO);
 });
 
@@ -256,6 +246,10 @@ test('haversine distance is sane', () => {
 });
 
 // ── Pricing ────────────────────────────────────────────────────────────────
+//
+// The server re-prices every basket from the database before it writes an
+// order, so these totals are what the customer is *shown*. They still have to
+// agree with the server to the penny, or the charge will not match the screen.
 section('Pricing');
 
 function lineFor(itemId, sizeIndex = 0, modifierPicks = [], quantity = 1) {
@@ -433,6 +427,29 @@ test('a discount that crosses the free-delivery line still charges delivery', ()
   assert.equal(withPromo.delivery, toPence(orderSetup.deliveryFee), '£22.90 net is under it');
 });
 
+test('the basket honours the shop’s current coupon, not the seeded one', () => {
+  // The seeded code stops working once the shop changes it — this is the whole
+  // point of the coupon being editable, and the easiest thing to get wrong is
+  // leaving pricing pointed at the static seed.
+  applyPromo({ isOn: true, code: 'SUMMER20', percentage: 20, minimumSpend: 10 });
+
+  assert.equal(evaluatePromo('EATON10', 5000).valid, false, 'the old code is dead');
+
+  const applied = evaluatePromo('summer20', 5000);
+  assert.equal(applied.valid, true, 'the new code applies, case-insensitively');
+  assert.equal(applied.discountPence, 1000, '20% of £50');
+
+  const tooSmall = evaluatePromo('SUMMER20', 500);
+  assert.equal(tooSmall.valid, false);
+  assert.equal(tooSmall.reason, 'below-minimum');
+
+  applyPromo({ isOn: false });
+  assert.equal(evaluatePromo('SUMMER20', 5000).valid, false, 'a paused offer refuses its own code');
+
+  resetToSeed();
+  assert.equal(getPromo().code, 'EATON10');
+});
+
 // ── Availability ───────────────────────────────────────────────────────────
 section('Order-type availability');
 
@@ -481,6 +498,14 @@ test('every referenced modifier group resolves', () => {
   }
 });
 
+test('a dangling group reference degrades quietly rather than crashing', () => {
+  const item = { modifierGroups: ['sauceChoice', 'does-not-exist'] };
+  const resolved = resolveModifierGroups(item, seedModifierGroups);
+
+  assert.equal(resolved.length, 1, 'missing groups are dropped, not rendered as undefined');
+  assert.equal(resolved[0].id, 'sauceChoice');
+});
+
 test('identical configurations produce the same line id', () => {
   const a = lineFor('holy-smash', 0, [['sauceChoice', 'ketchup'], ['extraDips', 'peri-salt']]);
   const b = lineFor('holy-smash', 0, [['extraDips', 'peri-salt'], ['sauceChoice', 'ketchup']]);
@@ -496,216 +521,67 @@ test('different configurations produce different line ids', () => {
   assert.notEqual(a.lineId, c.lineId);
 });
 
-// ── Catalog administration ─────────────────────────────────────────────────
-section('Catalog administration');
+// ── The catalog snapshot ───────────────────────────────────────────────────
+//
+// What the API hands back is installed wholesale. These cover the reasoning
+// that runs over the installed copy, not the storage rules — those are the
+// server's and are enforced in SQL.
+section('Catalog snapshot');
 
-test('a new category and item round-trip through the repository', () => {
-  resetCatalog();
-
-  saveCategory({ id: 'loaded', name: 'Loaded Fries', emoji: '🍟', description: '', displayOrder: 99 });
-  assert.ok(
-    getCatalog().categories.some((category) => category.id === 'loaded'),
-    'category was not saved',
-  );
-
-  saveItem({
-    id: 'loaded-cheese',
-    categoryId: 'loaded',
-    name: 'Cheese Loaded Fries',
-    description: '',
-    emoji: '🧀',
-    sizes: [{ id: 'std', name: 'Serve', price: 5.5 }],
-    modifierGroups: [],
+test('a catalog response replaces the snapshot', () => {
+  applyCatalog({
+    categories: [{ id: 'loaded', name: 'Loaded Fries', emoji: '🍟', displayOrder: 1 }],
+    items: [
+      {
+        id: 'loaded-cheese',
+        categoryId: 'loaded',
+        name: 'Cheese Loaded Fries',
+        emoji: '🧀',
+        sizes: [{ id: 'std', name: 'Serve', price: 5.5 }],
+        modifierGroups: [],
+        isPublished: true,
+      },
+    ],
+    modifierGroups: {},
   });
 
-  const saved = getCatalog().items.find((item) => item.id === 'loaded-cheese');
-  assert.ok(saved, 'item was not saved');
-  assert.equal(saved.sizes[0].price, 5.5);
-});
+  assert.equal(getCatalog().categories.length, 1);
+  assert.equal(getCatalog().items[0].sizes[0].price, 5.5);
 
-test('deleting a category with items is refused', () => {
-  const result = deleteCategory('loaded');
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'has-items');
-  assert.equal(result.count, 1);
-
-  deleteItem('loaded-cheese');
-  assert.equal(deleteCategory('loaded').ok, true, 'should delete once empty');
-});
-
-test('editing an item updates it in place rather than duplicating', () => {
-  const before = getCatalog().items.length;
-  saveItem({ id: 'holy-smash', name: 'Holy Smash (new recipe)' });
-
-  assert.equal(getCatalog().items.length, before, 'item count should not change');
-  assert.equal(
-    getCatalog().items.find((item) => item.id === 'holy-smash').name,
-    'Holy Smash (new recipe)',
-  );
+  resetToSeed();
+  assert.equal(getCatalog().items.length, seedMenuItems.length, 'reset restores the seed');
 });
 
 test('hiding an item takes it off the menu without deleting it', () => {
-  setItemPublished('holy-smash', false);
+  const hidden = getCatalog().items.map((item) =>
+    item.id === 'holy-smash' ? { ...item, isPublished: false } : item,
+  );
+  applyCatalog({ ...getCatalog(), items: hidden });
 
   const item = getCatalog().items.find((candidate) => candidate.id === 'holy-smash');
   assert.ok(item, 'item should still exist');
   assert.equal(isPublished(item), false, 'item should be hidden');
 
-  setItemPublished('holy-smash', true);
+  resetToSeed();
   assert.equal(
     isPublished(getCatalog().items.find((candidate) => candidate.id === 'holy-smash')),
     true,
   );
 });
 
-test('resetting the catalog restores the seed data', () => {
-  resetCatalog();
-  assert.equal(getCatalog().items.length, seedMenuItems.length);
-  assert.equal(
-    getCatalog().items.find((item) => item.id === 'holy-smash').name,
-    'Holy Smash',
-  );
-});
+test('option-group usage is reported across the whole menu', () => {
+  const inUse = itemsUsingModifierGroup('sauceChoice');
+  assert.ok(inUse.length > 0, 'the sauce group is attached to the burgers');
+  assert.ok(inUse.every((item) => item.modifierGroups.includes('sauceChoice')));
 
-// ── Option groups ──────────────────────────────────────────────────────────
-section('Option groups');
-
-test('slugify makes safe ids and avoids collisions', () => {
-  assert.equal(slugify('Choose your side'), 'choose-your-side');
-  assert.equal(slugify('Extra Hot!! 🌶️'), 'extra-hot');
-  assert.equal(slugify('Sides', ['sides']), 'sides-2');
-  assert.equal(slugify('Sides', ['sides', 'sides-2']), 'sides-3');
-  assert.equal(slugify('🌶️🌶️', [], 'group'), 'group', 'falls back when nothing survives');
-});
-
-test('the rule description matches what the item modal enforces', () => {
-  assert.equal(describeGroupRule({ min: 1, max: 1 }), 'Required · choose 1');
-  assert.equal(describeGroupRule({ min: 0, max: 1 }), 'Optional · choose 1');
-  assert.equal(describeGroupRule({ min: 0, max: 5 }), 'Optional · up to 5');
-  assert.equal(describeGroupRule({ min: 2, max: 2 }), 'Required · choose exactly 2');
-  assert.equal(describeGroupRule({ min: 2, max: 4 }), 'Required · choose 2–4');
-});
-
-test('an admin-created group round-trips and is attachable to an item', () => {
-  resetCatalog();
-
-  saveModifierGroup({
-    id: 'salad',
-    name: 'Salad',
-    min: 0,
-    max: 2,
-    options: [
-      { id: 'lettuce', name: 'Lettuce', price: 0 },
-      { id: 'tomato', name: 'Tomato', price: 0.3 },
-      { id: 'pickles', name: 'Pickles', price: 0.4 },
-    ],
-  });
-
-  assert.ok(getCatalog().modifierGroups.salad, 'group was not saved');
-
-  saveItem({ id: 'holy-smash', modifierGroups: ['sauceChoice', 'salad'] });
-
-  const item = getCatalog().items.find((candidate) => candidate.id === 'holy-smash');
-  const resolved = resolveModifierGroups(item, getCatalog().modifierGroups);
-
-  assert.equal(resolved.length, 2, 'both groups should resolve');
-  assert.ok(resolved.some((group) => group.id === 'salad'));
-});
-
-test('a group priced above zero adds to the line total', () => {
-  const item = getCatalog().items.find((candidate) => candidate.id === 'holy-smash');
-  const groups = resolveModifierGroups(item, getCatalog().modifierGroups);
-  const salad = groups.find((group) => group.id === 'salad');
-  const tomato = salad.options.find((option) => option.id === 'tomato');
-
-  const line = buildLine({
-    item,
-    size: item.sizes[0],
-    selectedModifiers: [
-      {
-        groupId: salad.id,
-        groupName: salad.name,
-        optionId: tomato.id,
-        optionName: tomato.name,
-        pricePence: toPence(tomato.price),
-      },
-    ],
-    quantity: 1,
-    notes: '',
-  });
-
-  assert.equal(lineUnitPence(line), 729, 'Holy Smash £6.99 plus a 30p tomato');
-});
-
-test('editing a group updates it in place', () => {
-  saveModifierGroup({
-    id: 'salad',
-    name: 'Salad & pickles',
-    min: 1,
-    max: 3,
-    options: [{ id: 'lettuce', name: 'Lettuce', price: 0 }],
-  });
-
-  const group = getCatalog().modifierGroups.salad;
-  assert.equal(group.name, 'Salad & pickles');
-  assert.equal(group.min, 1);
-  assert.equal(group.options.length, 1);
-  assert.equal(Object.keys(getCatalog().modifierGroups).filter((id) => id === 'salad').length, 1);
-});
-
-test('deleting a group in use is refused and names the items', () => {
-  const inUse = itemsUsingModifierGroup('salad');
-  assert.equal(inUse.length, 1);
-
-  const result = deleteModifierGroup('salad');
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'in-use');
-  assert.equal(result.count, 1);
-  assert.ok(result.items.includes('Holy Smash'));
-  assert.ok(getCatalog().modifierGroups.salad, 'group must survive a refused delete');
-});
-
-test('force-deleting a group detaches it from every item', () => {
-  const result = deleteModifierGroup('salad', { force: true });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.detachedFrom, 1);
-  assert.equal(getCatalog().modifierGroups.salad, undefined, 'group should be gone');
-
-  const item = getCatalog().items.find((candidate) => candidate.id === 'holy-smash');
-  assert.ok(
-    !item.modifierGroups.includes('salad'),
-    'the item must not keep a reference to a deleted group',
-  );
-});
-
-test('an unused group deletes without a fight', () => {
-  saveModifierGroup({
-    id: 'temp',
-    name: 'Temp',
-    min: 0,
-    max: 1,
-    options: [{ id: 'a', name: 'A', price: 0 }],
-  });
-
-  assert.equal(itemsUsingModifierGroup('temp').length, 0);
-  assert.equal(deleteModifierGroup('temp').ok, true);
-  assert.equal(getCatalog().modifierGroups.temp, undefined);
-});
-
-test('a dangling group reference degrades quietly rather than crashing', () => {
-  const item = { modifierGroups: ['sauceChoice', 'does-not-exist'] };
-  const resolved = resolveModifierGroups(item, getCatalog().modifierGroups);
-
-  assert.equal(resolved.length, 1, 'missing groups are dropped, not rendered as undefined');
-  assert.equal(resolved[0].id, 'sauceChoice');
+  assert.equal(itemsUsingModifierGroup('does-not-exist').length, 0);
 });
 
 // ── Hero banners ───────────────────────────────────────────────────────────
 section('Hero banners');
 
 test('seed slides are all renderable and uniquely identified', () => {
-  resetBanners();
+  resetToSeed();
   const { slides, settings } = getBanners();
 
   assert.ok(slides.length >= 2, 'a slider needs more than one slide to be a slider');
@@ -725,88 +601,15 @@ test('a slide with no heading is not renderable', () => {
   assert.equal(isBannerRenderable(null), false);
 });
 
-test('a new slide is appended and given the next position', () => {
-  resetBanners();
-  const before = getBanners().slides.length;
+test('banner settings merge over the defaults rather than replacing them', () => {
+  // A shop whose stored settings predate a new field must read the default for
+  // it, not `undefined` — which would render as a broken control.
+  applyBanners({ slides: [], settings: { autoplaySeconds: 9 } });
 
-  saveBanner({
-    id: 'promo',
-    heading: 'Student Tuesday',
-    headingAccent: '',
-    description: '',
-    isPublished: true,
-  });
+  assert.equal(getBanners().settings.autoplaySeconds, 9);
+  assert.equal(typeof getBanners().settings.areEmbersOn, 'boolean', 'missing key takes the default');
 
-  const slides = getBanners().slides;
-  assert.equal(slides.length, before + 1);
-  assert.equal(slides[slides.length - 1].id, 'promo');
-  assert.equal(slides[slides.length - 1].displayOrder, before + 1);
-});
-
-test('editing a slide updates it in place and keeps its position', () => {
-  const positionBefore = getBanners().slides.find((s) => s.id === 'promo').displayOrder;
-
-  saveBanner({ id: 'promo', heading: 'Student Wednesday' });
-
-  const slides = getBanners().slides;
-  assert.equal(slides.filter((slide) => slide.id === 'promo').length, 1, 'must not duplicate');
-  assert.equal(slides.find((slide) => slide.id === 'promo').heading, 'Student Wednesday');
-  assert.equal(slides.find((slide) => slide.id === 'promo').displayOrder, positionBefore);
-});
-
-test('reordering swaps neighbours and renumbers densely', () => {
-  resetBanners();
-  const original = getBanners().slides.map((slide) => slide.id);
-
-  assert.equal(moveBanner(original[0], 1), true);
-
-  const after = getBanners().slides.map((slide) => slide.id);
-  assert.equal(after[0], original[1], 'second slide should now be first');
-  assert.equal(after[1], original[0]);
-
-  // Positions must stay 1..n with no gaps, whatever the moves were.
-  assert.deepEqual(
-    getBanners().slides.map((slide) => slide.displayOrder),
-    after.map((_, index) => index + 1),
-  );
-});
-
-test('reordering past either end is refused', () => {
-  resetBanners();
-  const slides = getBanners().slides;
-
-  assert.equal(moveBanner(slides[0].id, -1), false, 'cannot move the first slide up');
-  assert.equal(moveBanner(slides[slides.length - 1].id, 1), false, 'cannot move the last one down');
-  assert.equal(moveBanner('does-not-exist', 1), false);
-});
-
-test('hiding a slide keeps it but takes it off the homepage', () => {
-  resetBanners();
-  const target = getBanners().slides[0];
-
-  setBannerPublished(target.id, false);
-
-  const stored = getBanners().slides.find((slide) => slide.id === target.id);
-  assert.ok(stored, 'the slide should still exist');
-  assert.equal(stored.isPublished, false);
-  assert.equal(isPublished(stored), false, 'the storefront filter must exclude it');
-
-  setBannerPublished(target.id, true);
-  assert.equal(isPublished(getBanners().slides.find((s) => s.id === target.id)), true);
-});
-
-test('deleting a slide removes it and closes the gap', () => {
-  resetBanners();
-  const target = getBanners().slides[1];
-
-  deleteBanner(target.id);
-
-  const slides = getBanners().slides;
-  assert.ok(!slides.some((slide) => slide.id === target.id));
-  assert.deepEqual(
-    slides.map((slide) => slide.displayOrder),
-    slides.map((_, index) => index + 1),
-  );
+  resetToSeed();
 });
 
 test('autoplay seconds are clamped to something readable', () => {
@@ -829,30 +632,6 @@ test('effect strength is clamped to 0–1', () => {
   assert.equal(clampIntensity(undefined, 0.4), 0.4, 'falls back when unset');
 });
 
-test('effect settings round-trip and clamp on the way in', () => {
-  resetBanners();
-
-  saveBannerSettings({ areEmbersOn: true, emberIntensity: 5 });
-  assert.equal(getBanners().settings.emberIntensity, 1, 'clamped on write, not on read');
-  assert.equal(getBanners().settings.areEmbersOn, true);
-
-  saveBannerSettings({ isAutoplayOn: false });
-  assert.equal(getBanners().settings.isAutoplayOn, false);
-  assert.equal(getBanners().settings.emberIntensity, 1, 'unrelated setting untouched');
-});
-
-test('settings survive a save and clamp on the way in', () => {
-  saveBannerSettings({ autoplaySeconds: 500, isAutoplayOn: false });
-
-  const { settings } = getBanners();
-  assert.equal(settings.autoplaySeconds, AUTOPLAY_MAX_SECONDS);
-  assert.equal(settings.isAutoplayOn, false);
-
-  saveBannerSettings({ isAutoplayOn: true });
-  assert.equal(getBanners().settings.isAutoplayOn, true);
-  assert.equal(getBanners().settings.autoplaySeconds, AUTOPLAY_MAX_SECONDS, 'unrelated key kept');
-});
-
 test('button links are routed to the right element type', () => {
   // Browser-handled: on-page anchors, phone, mail, absolute URLs.
   for (const href of ['#menu', 'tel:+441615550142', 'mailto:a@b.co', 'https://example.com']) {
@@ -873,92 +652,6 @@ test('a button needs both a label and a link to render', () => {
   assert.equal(hasLink('Order now', ''), false, 'a label with no link is a dead button');
   assert.equal(hasLink('', '#menu'), false, 'a link with no label is invisible');
   assert.equal(hasLink('  ', '  '), false);
-});
-
-test('banner images are counted as referenced, not orphans', () => {
-  resetCatalog();
-  resetBanners();
-
-  saveBanner({ id: 'promo-img', heading: 'With a photo', imageId: 'img_banner_1' });
-  saveItem({ id: 'holy-smash', imageId: 'img_item_1' });
-  saveCategory({ id: 'beef-burgers', name: 'Beef Burgers', imageId: 'img_cat_1' });
-
-  const referenced = allReferencedImageIds();
-
-  // Pruning against the menu alone would have deleted the banner's photo.
-  assert.ok(referenced.includes('img_banner_1'), 'banner photo must be kept');
-  assert.ok(referenced.includes('img_item_1'), 'item photo must be kept');
-  assert.ok(referenced.includes('img_cat_1'), 'category photo must be kept');
-  assert.ok(
-    referenced.every(Boolean),
-    'items without a photo must not contribute null to the keep-list',
-  );
-});
-
-test('a slide background image is referenced as well as its photo', () => {
-  resetCatalog();
-  resetBanners();
-
-  saveBanner({
-    id: 'promo-bg',
-    heading: 'With a backdrop',
-    imageId: 'img_slide_1',
-    backgroundImageId: 'img_bg_1',
-  });
-
-  const referenced = allReferencedImageIds();
-
-  // The two live on the same slide, so missing the second one would prune a
-  // backdrop the shop had just uploaded.
-  assert.ok(referenced.includes('img_slide_1'), 'slide photo must be kept');
-  assert.ok(referenced.includes('img_bg_1'), 'slide background must be kept');
-});
-
-test('the coupon is editable and clamps on the way in', () => {
-  resetPromo();
-
-  savePromo({ code: '  summer20 ', percentage: 20, minimumSpend: 15 });
-  const promo = getPromo();
-
-  assert.equal(promo.code, 'SUMMER20', 'stored trimmed and upper-case');
-  assert.equal(promo.percentage, 20);
-  assert.equal(promo.minimumSpend, 15);
-
-  savePromo({ percentage: 500 });
-  assert.equal(getPromo().percentage, 100, 'a discount over 100% is refused');
-
-  savePromo({ percentage: -10 });
-  assert.equal(getPromo().percentage, 0);
-
-  savePromo({ minimumSpend: 'not a number' });
-  assert.equal(getPromo().minimumSpend, 20, 'falls back to the seed minimum');
-
-  resetPromo();
-  assert.equal(getPromo().code, 'EATON10', 'reset restores the seeded coupon');
-});
-
-test('the basket honours the edited coupon, not the seeded one', () => {
-  resetPromo();
-
-  // The seeded code stops working once the shop changes it — this is the whole
-  // point of the coupon being editable, and the easiest thing to get wrong is
-  // leaving pricing pointed at the static seed.
-  savePromo({ code: 'SUMMER20', percentage: 20, minimumSpend: 10 });
-
-  assert.equal(evaluatePromo('EATON10', 5000).valid, false, 'the old code is dead');
-
-  const applied = evaluatePromo('summer20', 5000);
-  assert.equal(applied.valid, true, 'the new code applies, case-insensitively');
-  assert.equal(applied.discountPence, 1000, '20% of £50');
-
-  const tooSmall = evaluatePromo('SUMMER20', 500);
-  assert.equal(tooSmall.valid, false);
-  assert.equal(tooSmall.reason, 'below-minimum');
-
-  savePromo({ isOn: false });
-  assert.equal(evaluatePromo('SUMMER20', 5000).valid, false, 'a paused offer refuses its own code');
-
-  resetPromo();
 });
 
 // ── Images ─────────────────────────────────────────────────────────────────
@@ -1007,14 +700,9 @@ test('source files are validated before decoding', () => {
 });
 
 test('every validation reason has a message for the shop', () => {
-  for (const reason of ['no-file', 'not-an-image', 'too-large', 'decode', 'store']) {
+  for (const reason of ['no-file', 'not-an-image', 'too-large', 'decode', 'upload']) {
     assert.ok(IMAGE_ERRORS[reason], `no message for "${reason}"`);
   }
-});
-
-test('image ids are unique', () => {
-  const ids = new Set(Array.from({ length: 500 }, () => generateImageId()));
-  assert.equal(ids.size, 500, 'id collision would overwrite another photo');
 });
 
 test('formatBytes is readable at each scale', () => {
@@ -1023,23 +711,85 @@ test('formatBytes is readable at each scale', () => {
   assert.equal(formatBytes(3 * 1024 * 1024), '3.0 MB');
 });
 
-test('an item keeps its image id through a save/edit cycle', () => {
-  resetCatalog();
-  saveItem({ id: 'holy-smash', imageId: 'img_test_1' });
+test('image URLs are picked up from an API payload', () => {
+  clearImageUrls();
 
-  const item = getCatalog().items.find((candidate) => candidate.id === 'holy-smash');
-  assert.equal(item.imageId, 'img_test_1');
+  // Shaped like a catalog response: the URL travels with the id, so the menu
+  // never has to look one up.
+  registerImageUrls({
+    categories: [{ id: 'burgers', imageId: 'img_cat', imageUrl: '/uploads/img_cat.webp' }],
+    items: [{ id: 'holy-smash', imageId: 'img_item', imageUrl: '/uploads/img_item.jpg' }],
+  });
 
-  // An unrelated edit must not silently drop the photo.
-  saveItem({ id: 'holy-smash', name: 'Holy Smash' });
-  assert.equal(
-    getCatalog().items.find((candidate) => candidate.id === 'holy-smash').imageId,
-    'img_test_1',
+  assert.equal(getImageUrl('img_cat'), '/uploads/img_cat.webp');
+  assert.equal(getImageUrl('img_item'), '/uploads/img_item.jpg');
+  assert.equal(getImageUrl('img_unknown'), null, 'an unknown id falls back to the emoji');
+  assert.equal(getImageUrl(null), null);
+});
+
+test('a slide registers both its photo and its backdrop', () => {
+  clearImageUrls();
+
+  // The two live on the same object under different keys; missing the second
+  // would leave a banner background the shop had just uploaded unrenderable.
+  registerImageUrls({
+    slides: [
+      {
+        id: 'promo',
+        imageId: 'img_slide',
+        imageUrl: '/uploads/slide.webp',
+        backgroundImageId: 'img_bg',
+        backgroundImageUrl: '/uploads/bg.webp',
+      },
+    ],
+  });
+
+  assert.equal(getImageUrl('img_slide'), '/uploads/slide.webp');
+  assert.equal(getImageUrl('img_bg'), '/uploads/bg.webp');
+});
+
+test('an id with no URL is not registered as one', () => {
+  clearImageUrls();
+  registerImageUrls({ items: [{ id: 'x', imageId: 'img_x', imageUrl: null }] });
+
+  assert.equal(getImageUrl('img_x'), null, 'a null URL must not become a broken <img>');
+});
+
+test('every collection contributes to the in-use image list', () => {
+  resetToSeed();
+
+  applyCatalog({
+    ...getCatalog(),
+    items: getCatalog().items.map((item) =>
+      item.id === 'holy-smash' ? { ...item, imageId: 'img_item_1' } : item,
+    ),
+    categories: getCatalog().categories.map((category) =>
+      category.id === 'beef-burgers' ? { ...category, imageId: 'img_cat_1' } : category,
+    ),
+  });
+
+  applyBanners({
+    slides: [{ id: 'promo', heading: 'Hi', imageId: 'img_banner_1', backgroundImageId: 'img_bg_1' }],
+    settings: {},
+  });
+
+  const referenced = allReferencedImageIds();
+
+  // Checking the menu alone would treat every banner photo as an orphan.
+  assert.ok(referenced.includes('img_item_1'), 'item photo must be counted');
+  assert.ok(referenced.includes('img_cat_1'), 'category photo must be counted');
+  assert.ok(referenced.includes('img_banner_1'), 'banner photo must be counted');
+  assert.ok(referenced.includes('img_bg_1'), 'banner backdrop must be counted');
+  assert.ok(
+    referenced.every(Boolean),
+    'items without a photo must not contribute null to the list',
   );
+
+  resetToSeed();
 });
 
 test('a basket line snapshots the image id alongside the price', () => {
-  const item = getCatalog().items.find((candidate) => candidate.id === 'holy-smash');
+  const item = { ...findSeedItem('holy-smash'), imageId: 'img_test_1' };
   const line = buildLine({
     item,
     size: item.sizes[0],
@@ -1057,41 +807,6 @@ test('an item with no photo stores null rather than undefined', () => {
 
   assert.equal(line.imageId, null, 'null survives JSON round-trips; undefined does not');
   assert.equal(JSON.parse(JSON.stringify(line)).imageId, null);
-});
-
-// The blob store falls back to memory outside a browser, so the storage
-// contract is still exercised here.
-testAsync('blobs round-trip through the image store', async () => {
-  await putImageBlob('img_a', 'fake-blob-a');
-  await putImageBlob('img_b', 'fake-blob-b');
-
-  assert.equal(await getImageBlob('img_a'), 'fake-blob-a');
-  assert.equal(await getImageBlob('img_b'), 'fake-blob-b');
-  assert.equal(await getImageBlob('img_missing'), null, 'a missing id must not throw');
-  assert.equal(await getImageBlob(null), null);
-});
-
-testAsync('deleting an image removes only that one', async () => {
-  await deleteImage('img_a');
-
-  assert.equal(await getImageBlob('img_a'), null);
-  assert.equal(await getImageBlob('img_b'), 'fake-blob-b');
-});
-
-testAsync('pruning drops orphans and keeps referenced images', async () => {
-  await putImageBlob('img_keep', 'keep');
-  await putImageBlob('img_orphan', 'orphan');
-
-  // Nulls stand for items with no photo and must not break the keep-set.
-  const removed = await pruneImages(['img_keep', null, undefined]);
-
-  assert.ok(removed >= 1, 'the orphan should have been swept up');
-  assert.equal(await getImageBlob('img_keep'), 'keep');
-  assert.equal(await getImageBlob('img_orphan'), null);
-  assert.equal(await getImageBlob('img_b'), null, 'unreferenced images go too');
-
-  const remaining = await listImageIds();
-  assert.deepEqual(remaining, ['img_keep']);
 });
 
 // ── Order status ───────────────────────────────────────────────────────────
@@ -1123,164 +838,126 @@ test('a cancelled order reports itself as cancelled', () => {
 });
 
 // ── Reports ────────────────────────────────────────────────────────────────
+//
+// The API aggregates in SQL and returns one row per trading day. What is
+// tested here is the roll-up into weeks and months, and the gap-filling that
+// keeps a quiet day visible as a zero.
 section('Revenue reports');
 
-function fakeOrder({ at, total, orderType = ORDER_TYPE.PICKUP, status = 'complete', itemCount = 2 }) {
-  return {
-    reference: `EF-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-    placedAt: at.toISOString(),
-    readyAt: at.toISOString(),
-    orderType,
-    status,
-    customer: { name: 'Test' },
-    lines: [
-      {
-        lineId: 'x',
-        itemId: 'holy-smash',
-        name: 'Holy Smash',
-        emoji: '🍔',
-        sizePence: total,
-        modifiers: [],
-        quantity: 1,
-      },
-    ],
-    totals: { total, subtotal: total, discount: 0, delivery: 0, surcharge: 0, itemCount },
-  };
-}
+// A Wednesday.
+const REPORT_TODAY = new Date(2026, 7, 12);
 
-const REPORT_NOW = fromStoreWallTime(2026, 8, 12, 20 * 3600); // Wed 8pm
+const day = (date, orders, revenuePence) => ({ date, orders, revenuePence });
 
-test('daily buckets group orders by store-local day', () => {
-  const orders = [
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 12, 13 * 3600), total: 1000 }),
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 12, 19 * 3600), total: 1500 }),
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 11, 19 * 3600), total: 2000 }),
-  ];
+test('daily buckets keep each day separate and fill the gaps', () => {
+  const report = buildReport({
+    granularity: GRANULARITY.DAILY,
+    daily: [day('2026-08-12', 2, 2500), day('2026-08-11', 1, 2000)],
+    today: REPORT_TODAY,
+  });
 
-  const report = buildReport({ granularity: GRANULARITY.DAILY, orders, now: REPORT_NOW });
   const today = report.buckets[report.buckets.length - 1];
   const yesterday = report.buckets[report.buckets.length - 2];
 
+  assert.equal(report.buckets.length, 14);
   assert.equal(today.orders, 2);
   assert.equal(today.revenue, 2500);
   assert.equal(yesterday.orders, 1);
   assert.equal(yesterday.revenue, 2000);
-  assert.equal(report.totals.revenue, 4500);
-});
-
-test('buckets are continuous, so quiet days appear as zeroes', () => {
-  const report = buildReport({ granularity: GRANULARITY.DAILY, orders: [], now: REPORT_NOW });
-
-  assert.equal(report.buckets.length, 14);
-  assert.ok(
-    report.buckets.every((bucket) => bucket.revenue === 0),
-    'empty window should be all zeroes, not missing buckets',
-  );
-
-  // Each bucket must be exactly one day after the previous one.
-  for (let index = 1; index < report.buckets.length; index += 1) {
-    const gap = report.buckets[index].start - report.buckets[index - 1].start;
-    assert.ok(gap > 0, 'buckets must run forwards');
-  }
-});
-
-test('cancelled orders are excluded from revenue but still counted', () => {
-  const orders = [
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 12, 13 * 3600), total: 1000 }),
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 12, 14 * 3600), total: 5000, status: 'cancelled' }),
-  ];
-
-  const report = buildReport({ granularity: GRANULARITY.DAILY, orders, now: REPORT_NOW });
-
-  assert.equal(report.totals.revenue, 1000, 'cancelled revenue must not count');
-  assert.equal(report.totals.orders, 1);
-  assert.equal(report.totals.cancelled, 1);
+  assert.equal(report.buckets[0].revenue, 0, 'a quiet day is a zero, not a missing bar');
 });
 
 test('weekly buckets start on Monday and gather the whole week', () => {
   // 2026-08-10 is a Monday; the 12th is that Wednesday.
-  const orders = [
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 10, 13 * 3600), total: 1000 }),
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 12, 13 * 3600), total: 2000 }),
-  ];
+  const report = buildReport({
+    granularity: GRANULARITY.WEEKLY,
+    daily: [day('2026-08-10', 1, 1000), day('2026-08-12', 1, 2000)],
+    today: REPORT_TODAY,
+  });
 
-  const report = buildReport({ granularity: GRANULARITY.WEEKLY, orders, now: REPORT_NOW });
   const current = report.buckets[report.buckets.length - 1];
 
-  assert.equal(current.orders, 2, 'both orders fall in the same week');
+  assert.equal(current.orders, 2, 'both days fall in the same week');
   assert.equal(current.revenue, 3000);
-  assert.equal(storeParts(current.start).isoDay, 1, 'week must start on Monday');
+  assert.equal(current.key, '2026-08-10', 'the week is keyed by its Monday');
 });
 
 test('monthly buckets gather the whole month', () => {
-  const orders = [
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 1, 13 * 3600), total: 1000 }),
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 12, 13 * 3600), total: 2000 }),
-    fakeOrder({ at: fromStoreWallTime(2026, 7, 20, 13 * 3600), total: 4000 }),
-  ];
+  const report = buildReport({
+    granularity: GRANULARITY.MONTHLY,
+    daily: [day('2026-08-01', 1, 1000), day('2026-08-12', 1, 2000), day('2026-07-20', 1, 4000)],
+    today: REPORT_TODAY,
+  });
 
-  const report = buildReport({ granularity: GRANULARITY.MONTHLY, orders, now: REPORT_NOW });
   const august = report.buckets[report.buckets.length - 1];
   const july = report.buckets[report.buckets.length - 2];
 
   assert.equal(august.revenue, 3000);
   assert.equal(july.revenue, 4000);
-  assert.equal(storeParts(august.start).day, 1, 'month must start on the 1st');
+  assert.equal(august.key, '2026-08-01', 'the month is keyed by its first');
 });
 
-test('order-type split and average order value are computed', () => {
-  const orders = [
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 12, 13 * 3600), total: 1000, orderType: ORDER_TYPE.DELIVERY }),
-    fakeOrder({ at: fromStoreWallTime(2026, 8, 12, 14 * 3600), total: 3000, orderType: ORDER_TYPE.PICKUP }),
-  ];
+test('days outside the window are ignored rather than folded into an edge bucket', () => {
+  const report = buildReport({
+    granularity: GRANULARITY.DAILY,
+    daily: [day('2026-01-01', 3, 9999)],
+    today: REPORT_TODAY,
+  });
 
-  const report = buildReport({ granularity: GRANULARITY.DAILY, orders, now: REPORT_NOW });
-
-  assert.equal(report.totals.delivery, 1);
-  assert.equal(report.totals.collection, 1);
-  assert.equal(report.totals.deliveryRevenue, 1000);
-  assert.equal(report.totals.collectionRevenue, 3000);
-  assert.equal(report.totals.averageOrderValue, 2000);
+  assert.ok(
+    report.buckets.every((bucket) => bucket.revenue === 0),
+    'a January day must not land in an August bucket',
+  );
 });
 
-test('orders older than the window are ignored', () => {
-  const orders = [fakeOrder({ at: fromStoreWallTime(2026, 1, 1, 13 * 3600), total: 9999 })];
-  const report = buildReport({ granularity: GRANULARITY.DAILY, orders, now: REPORT_NOW });
+test('the change figure compares the latest bucket with the one before', () => {
+  const report = buildReport({
+    granularity: GRANULARITY.DAILY,
+    daily: [day('2026-08-12', 1, 1500), day('2026-08-11', 1, 1000)],
+    today: REPORT_TODAY,
+  });
 
-  assert.equal(report.totals.revenue, 0, 'January order is outside a 14-day window');
+  assert.equal(Math.round(report.changePercent), 50);
+  assert.equal(report.peak.revenue, 1500);
 });
 
-test('best sellers rank by units sold', () => {
-  const orders = [
-    {
-      ...fakeOrder({ at: fromStoreWallTime(2026, 8, 12, 13 * 3600), total: 1000 }),
-      lines: [
-        { lineId: 'a', itemId: 'fries', name: 'Fries', emoji: '🍟', sizePence: 299, modifiers: [], quantity: 3 },
-        { lineId: 'b', itemId: 'holy-smash', name: 'Holy Smash', emoji: '🍔', sizePence: 699, modifiers: [], quantity: 1 },
-      ],
-    },
-  ];
+test('a period with no prior revenue reports no change rather than infinity', () => {
+  const report = buildReport({
+    granularity: GRANULARITY.DAILY,
+    daily: [day('2026-08-12', 1, 1500)],
+    today: REPORT_TODAY,
+  });
 
-  const best = topItems({ orders });
-
-  assert.equal(best[0].itemId, 'fries');
-  assert.equal(best[0].quantity, 3);
-  assert.equal(best[0].revenue, 897);
+  assert.equal(report.changePercent, null, 'dividing by a zero previous period must not show ∞');
 });
 
-// ── Async queue ────────────────────────────────────────────────────────────
-section('Image storage (async)');
+test('the requested range spans the window the chart will show', () => {
+  const daily = reportRange(GRANULARITY.DAILY, REPORT_TODAY);
+  assert.equal(daily.to, '2026-08-12');
+  assert.equal(daily.from, '2026-07-30', '14 days inclusive');
 
-for (const { name, fn } of asyncTests) {
-  try {
-    await fn();
-    passed += 1;
-    console.log(`  ✓ ${name}`);
-  } catch (error) {
-    failures.push({ name, error });
-    console.log(`  ✗ ${name}\n      ${error.message}`);
-  }
-}
+  const monthly = reportRange(GRANULARITY.MONTHLY, REPORT_TODAY);
+  assert.ok(monthly.from < '2025-09-01', 'a year of months needs a year of days');
+});
+
+// ── Option-group rules ─────────────────────────────────────────────────────
+section('Option groups');
+
+test('slugify makes safe ids and avoids collisions', () => {
+  assert.equal(slugify('Choose your side'), 'choose-your-side');
+  assert.equal(slugify('Extra Hot!! 🌶️'), 'extra-hot');
+  assert.equal(slugify('Sides', ['sides']), 'sides-2');
+  assert.equal(slugify('Sides', ['sides', 'sides-2']), 'sides-3');
+  assert.equal(slugify('🌶️🌶️', [], 'group'), 'group', 'falls back when nothing survives');
+});
+
+test('the rule description matches what the item modal enforces', () => {
+  assert.equal(describeGroupRule({ min: 1, max: 1 }), 'Required · choose 1');
+  assert.equal(describeGroupRule({ min: 0, max: 1 }), 'Optional · choose 1');
+  assert.equal(describeGroupRule({ min: 0, max: 5 }), 'Optional · up to 5');
+  assert.equal(describeGroupRule({ min: 2, max: 2 }), 'Required · choose exactly 2');
+  assert.equal(describeGroupRule({ min: 2, max: 4 }), 'Required · choose 2–4');
+});
 
 // ── Result ─────────────────────────────────────────────────────────────────
 console.log(`\n${passed} passed, ${failures.length} failed`);

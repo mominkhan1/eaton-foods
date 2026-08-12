@@ -20,6 +20,11 @@ email-preview/
 # Deployment archives — rebuilt from source, no reason to version them.
 *.zip
 
+# Photos uploaded through the admin panel while developing. They belong to
+# whichever database they were uploaded against, not to the source — and the
+# deploy leaves the server's own uploads/ alone for the same reason.
+public/uploads/
+
 # The raw browser export. It can contain customer orders with names, phone
 # numbers and addresses, so it stays out of git; only the generated
 # server/local-data.sql and the image files are committed.

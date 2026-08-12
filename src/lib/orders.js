@@ -1,6 +1,10 @@
 /**
  * Orders.
  *
+ * Orders live on the server. This module holds the status vocabulary the two
+ * sides share and the small amount of reasoning the browser does about it;
+ * placing, reading and advancing an order all go through the API.
+ *
  * Status is explicit and shop-controlled — the admin advances it and the
  * customer's tracking screen reads it back. Nothing infers progress from a
  * clock, because a guessed status that contradicts the kitchen is worse than
@@ -8,8 +12,7 @@
  */
 
 import { ORDER_TYPE } from '../data/store.js';
-import { prepMinutes } from './hours.js';
-import { putOrder, patchOrder, findOrder, listOrders as repoListOrders } from './repository.js';
+import { api } from './api.js';
 
 export const ORDER_STATUS = [
   { id: 'received', label: 'Order received', description: 'We have your order.', tone: 'new' },
@@ -41,72 +44,55 @@ export function nextStatusFor(order) {
   return steps[index + 1] ?? null;
 }
 
-function generateReference() {
-  // Short, readable, no ambiguous characters.
-  const alphabet = 'ACDEFGHJKLMNPQRSTUVWXYZ2345679';
-  let reference = '';
-  for (let index = 0; index < 6; index += 1) {
-    reference += alphabet[Math.floor(Math.random() * alphabet.length)];
-  }
-  return `EF-${reference}`;
-}
-
-export function placeOrder({ lines, totals, orderType, timing, address, customer, promoCode }) {
-  const now = new Date();
-  const readyAt =
-    timing.mode === 'scheduled' && timing.slot
-      ? new Date(timing.slot)
-      : new Date(now.getTime() + prepMinutes(orderType) * 60000);
-
-  return putOrder({
-    reference: generateReference(),
-    placedAt: now.toISOString(),
-    readyAt: readyAt.toISOString(),
+/**
+ * Place an order.
+ *
+ * The basket is sent as item ids, sizes and choices — never prices. The server
+ * re-prices every line from the database before it writes anything, so a
+ * customer who edits the JavaScript to send `price: 0.01` still gets charged
+ * the real menu price. That means the totals the browser computed are for
+ * display only, and the order that comes back is the authority.
+ */
+export function placeOrder({ lines, orderType, timing, address, customer, promoCode }) {
+  return api.placeOrder({
     orderType,
     timing,
-    address: orderType === ORDER_TYPE.DELIVERY ? address : null,
+    promoCode: promoCode || null,
     customer,
-    promoCode,
-    lines,
-    totals,
-    status: 'received',
-    // Set when the shop first opens the order — drives the "new order" alert.
-    acknowledgedAt: null,
+    address:
+      orderType === ORDER_TYPE.DELIVERY && address
+        ? {
+            line1: address.line1,
+            line2: address.line2 ?? null,
+            city: address.city ?? null,
+            postcode: address.postcode,
+            lat: address.coords?.lat ?? null,
+            lng: address.coords?.lng ?? null,
+          }
+        : null,
+    lines: lines.map((line) => ({
+      itemId: line.itemId,
+      sizeId: line.sizeId,
+      quantity: line.quantity,
+      notes: line.notes || null,
+      modifiers: (line.modifiers ?? []).map((modifier) => ({
+        groupId: modifier.groupId,
+        optionId: modifier.optionId,
+      })),
+    })),
   });
 }
 
+export function getOrder(reference, options) {
+  return api.trackOrder(reference, options);
+}
+
 export function setOrderStatus(reference, statusId) {
-  return patchOrder(reference, { status: statusId });
+  return api.admin.setOrderStatus(reference, statusId);
 }
 
 export function acknowledgeOrder(reference) {
-  return patchOrder(reference, { acknowledgedAt: new Date().toISOString() });
-}
-
-/** Orders the kitchen has not opened yet. */
-export function unacknowledgedOrders() {
-  return repoListOrders().filter(
-    (order) => !order.acknowledgedAt && order.status !== 'cancelled',
-  );
-}
-
-/** Orders still in play, oldest first — the kitchen works top-down. */
-export function activeOrders() {
-  return repoListOrders()
-    .filter((order) => order.status !== 'complete' && order.status !== 'cancelled')
-    .sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
-}
-
-export function getOrder(reference) {
-  return findOrder(reference);
-}
-
-export function listOrders() {
-  return repoListOrders();
-}
-
-export function mostRecentOrder() {
-  return repoListOrders()[0] ?? null;
+  return api.admin.acknowledgeOrder(reference);
 }
 
 /** Where this order sits on the customer-facing timeline. */
@@ -123,4 +109,40 @@ export function statusPosition(order) {
     current: findStatus(order.status),
     isCancelled: order.status === 'cancelled',
   };
+}
+
+/**
+ * References this browser has placed, newest first.
+ *
+ * Kept locally on purpose: it is the "your recent orders" convenience on the
+ * tracking page, not a source of truth. There is no customer login, and an
+ * endpoint that listed somebody else's orders by phone number would be a way
+ * to read them.
+ */
+const RECENT_KEY = 'eaton.recent-orders.v1';
+const RECENT_LIMIT = 5;
+
+export function rememberOrder(order) {
+  if (!order?.reference) return;
+
+  try {
+    const existing = recentOrderRefs().filter((entry) => entry.reference !== order.reference);
+    const next = [
+      { reference: order.reference, placedAt: order.placedAt, total: order.totals?.total ?? 0 },
+      ...existing,
+    ].slice(0, RECENT_LIMIT);
+
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch {
+    // Private browsing — the customer simply has no recent list.
+  }
+}
+
+export function recentOrderRefs() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }

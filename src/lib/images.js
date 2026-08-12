@@ -1,24 +1,25 @@
 /**
  * Image storage.
  *
- * Photos go in IndexedDB, not `localStorage` — the latter holds ~5MB of
- * *strings*, so base64-encoding a couple of phone photos would blow the whole
- * quota and take the menu and orders down with it. IndexedDB stores Blobs
- * natively and has orders of magnitude more room.
+ * Photos live on the server. The browser downscales and re-encodes before
+ * uploading — a modern phone camera produces 4–8MB files and a menu card
+ * renders at roughly 200px, so sending the original would be ~40× more bytes
+ * than anyone can see, over a shop's uplink. That work happens before the bytes
+ * leave the device, which is the whole reason to keep it.
  *
- * Every upload is downscaled and re-encoded in the browser before it is
- * stored. A modern phone camera produces 4–8MB files; a menu card renders at
- * roughly 200px. Storing the original would be ~40× more bytes than anyone can
- * see, so uploads are capped at MAX_EDGE and re-encoded to WebP.
+ * An uploaded photo is addressed by its server-issued id. The API returns the
+ * public URL alongside every id it hands out — in the catalog, in the banners,
+ * and in the upload response — so this module never has to guess a filename or
+ * make a second request to resolve one. `registerImageUrls` collects those
+ * pairs; `getImageUrl` reads them back.
  *
- * When this moves to a server, `putImage` becomes an upload returning a URL,
- * and `getImageUrl` returns that URL directly. The downscaling is worth keeping
- * either way — it happens before the bytes leave the device.
+ * Nothing is cached in the browser's own storage. An earlier version kept
+ * blobs in IndexedDB, which meant a photo uploaded by the shop existed only in
+ * the manager's browser: the customer's device had no way to see it, and the
+ * database never learned about it at all.
  */
 
-const DB_NAME = 'eaton-images';
-const STORE = 'images';
-const DB_VERSION = 1;
+import { api } from './api.js';
 
 /** Longest edge kept, in CSS pixels — 2× a large card for retina screens. */
 export const MAX_EDGE = 900;
@@ -59,7 +60,7 @@ export const IMAGE_ERRORS = {
   'not-an-image': 'That file is not an image.',
   'too-large': `Images must be under ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)}MB.`,
   decode: 'That image could not be read — try a JPEG or PNG.',
-  store: 'The image could not be saved. Your browser storage may be full.',
+  upload: 'The image could not be uploaded. Please try again.',
 };
 
 export function formatBytes(bytes) {
@@ -68,168 +69,60 @@ export function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function generateImageId() {
-  const random = Math.random().toString(36).slice(2, 10);
-  return `img_${Date.now().toString(36)}_${random}`;
-}
+// ── The id → URL registry ──────────────────────────────────────────────────
 
-// ── IndexedDB ──────────────────────────────────────────────────────────────
+/*
+ * A shop's whole photo library is a few dozen entries, so one flat map for the
+ * session is cheaper than tracking which screen needs which photo. It is fed
+ * from API responses rather than built here: the server owns the filename, and
+ * an id alone does not imply a URL (the extension depends on what the browser
+ * managed to encode).
+ */
+const urls = new Map();
 
-/** Node and locked-down browsers get a memory store so nothing throws. */
-const memoryStore = new Map();
+/**
+ * Record the id → URL pairs carried by an API payload.
+ *
+ * Accepts any object or array and walks it, picking up every `imageId` /
+ * `imageUrl` pair — including the `backgroundImageId` / `backgroundImageUrl`
+ * pair a banner slide carries. Walking the payload rather than naming each
+ * collection means a new endpoint that returns photos works without a change
+ * here.
+ */
+export function registerImageUrls(payload) {
+  if (!payload || typeof payload !== 'object') return;
 
-function hasIndexedDb() {
-  return typeof indexedDB !== 'undefined';
-}
-
-let dbPromise = null;
-
-function openDb() {
-  if (!hasIndexedDb()) return Promise.reject(new Error('no-indexeddb'));
-
-  if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
-      };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    }).catch((error) => {
-      // Let a later call retry rather than caching the failure forever.
-      dbPromise = null;
-      throw error;
-    });
-  }
-
-  return dbPromise;
-}
-
-async function withStore(mode, work) {
-  if (!hasIndexedDb()) return work(null);
-
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE, mode);
-    const store = transaction.objectStore(STORE);
-    let result;
-
-    try {
-      result = work(store);
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    transaction.oncomplete = () => resolve(result?.result ?? result);
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () => reject(transaction.error);
-  });
-}
-
-export async function putImageBlob(id, blob) {
-  if (!hasIndexedDb()) {
-    memoryStore.set(id, blob);
-    return id;
-  }
-  await withStore('readwrite', (store) => store.put(blob, id));
-  return id;
-}
-
-export async function getImageBlob(id) {
-  if (!id) return null;
-  if (!hasIndexedDb()) return memoryStore.get(id) ?? null;
-
-  try {
-    return (await withStore('readonly', (store) => store.get(id))) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export async function deleteImage(id) {
-  if (!id) return;
-  revokeImageUrl(id);
-
-  if (!hasIndexedDb()) {
-    memoryStore.delete(id);
+  if (Array.isArray(payload)) {
+    for (const entry of payload) registerImageUrls(entry);
     return;
   }
 
-  try {
-    await withStore('readwrite', (store) => store.delete(id));
-  } catch {
-    // A failed cleanup only wastes space; never block the catalog edit on it.
-  }
-}
-
-export async function listImageIds() {
-  if (!hasIndexedDb()) return [...memoryStore.keys()];
-
-  try {
-    return (await withStore('readonly', (store) => store.getAllKeys())) ?? [];
-  } catch {
-    return [];
-  }
-}
-
-/** Drop stored images no longer referenced by the catalog. */
-export async function pruneImages(keepIds) {
-  const keep = new Set(keepIds.filter(Boolean));
-  const stored = await listImageIds();
-
-  const orphans = stored.filter((id) => !keep.has(id));
-  await Promise.all(orphans.map((id) => deleteImage(id)));
-
-  return orphans.length;
-}
-
-// ── Object URLs ────────────────────────────────────────────────────────────
-
-/**
- * Session-scoped cache.
- *
- * A menu has tens of images, not thousands, so holding one object URL each for
- * the session is cheaper than refcounting every mount/unmount — and far harder
- * to get wrong. URLs are revoked explicitly when an image is replaced or
- * deleted.
- */
-const urlCache = new Map();
-const pending = new Map();
-
-export function peekImageUrl(id) {
-  return id ? (urlCache.get(id) ?? null) : null;
-}
-
-export async function getImageUrl(id) {
-  if (!id) return null;
-  if (urlCache.has(id)) return urlCache.get(id);
-  if (pending.has(id)) return pending.get(id);
-
-  const load = (async () => {
-    const blob = await getImageBlob(id);
-    if (!blob) {
-      pending.delete(id);
-      return null;
+  for (const [key, value] of Object.entries(payload)) {
+    // `imageUrl` → `imageId`, `backgroundImageUrl` → `backgroundImageId`.
+    if (key.endsWith('ImageUrl') || key === 'imageUrl') {
+      const idKey = `${key.slice(0, -3)}Id`;
+      const id = payload[idKey];
+      if (id && typeof value === 'string' && value) urls.set(id, value);
+      continue;
     }
 
-    const url = URL.createObjectURL(blob);
-    urlCache.set(id, url);
-    pending.delete(id);
-    return url;
-  })();
-
-  pending.set(id, load);
-  return load;
+    if (value && typeof value === 'object') registerImageUrls(value);
+  }
 }
 
-export function revokeImageUrl(id) {
-  const url = urlCache.get(id);
-  if (url) URL.revokeObjectURL(url);
-  urlCache.delete(id);
-  pending.delete(id);
+/** Public URL for a stored image id, or null when it is not known. */
+export function getImageUrl(id) {
+  if (!id) return null;
+  return urls.get(id) ?? null;
+}
+
+export function forgetImageUrl(id) {
+  if (id) urls.delete(id);
+}
+
+/** Test hook — the registry is module state and outlives a single case. */
+export function clearImageUrls() {
+  urls.clear();
 }
 
 // ── Upload pipeline ────────────────────────────────────────────────────────
@@ -272,11 +165,14 @@ function encode(canvas, type, quality) {
 }
 
 /**
- * Validate → decode → downscale → re-encode → store.
+ * Validate → decode → downscale → re-encode → upload.
  *
- * Resolves `{ ok, id, width, height, bytes }`, or `{ ok: false, reason }`.
+ * Resolves `{ ok, id, url, width, height, bytes }`, or `{ ok: false, reason }`.
+ * The server validates independently — it inspects the bytes rather than
+ * trusting the filename or the declared type — because the client doing the
+ * right thing is not a guarantee.
  */
-export async function processAndStoreImage(file, { maxEdge = MAX_EDGE, quality = QUALITY } = {}) {
+export async function processAndUploadImage(file, { maxEdge = MAX_EDGE, quality = QUALITY } = {}) {
   const validation = validateSourceFile(file);
   if (!validation.ok) return validation;
 
@@ -314,20 +210,49 @@ export async function processAndStoreImage(file, { maxEdge = MAX_EDGE, quality =
     return { ok: false, reason: 'decode' };
   }
 
-  const id = generateImageId();
+  const extension = blob.type === 'image/webp' ? 'webp' : 'jpg';
+
+  let uploaded;
   try {
-    await putImageBlob(id, blob);
-  } catch {
-    return { ok: false, reason: 'store' };
+    uploaded = await api.admin.uploadImage(
+      new File([blob], `upload.${extension}`, { type: blob.type }),
+    );
+  } catch (error) {
+    // The API writes its messages for a person to read, so prefer it over the
+    // generic one whenever there is one.
+    return { ok: false, reason: 'upload', message: error?.message };
   }
+
+  urls.set(uploaded.id, uploaded.url);
 
   return {
     ok: true,
-    id,
-    width: target.width,
-    height: target.height,
+    id: uploaded.id,
+    url: uploaded.url,
+    width: uploaded.width,
+    height: uploaded.height,
     bytes: blob.size,
     sourceBytes: file.size,
     type: blob.type,
   };
+}
+
+/**
+ * Delete an image from the server.
+ *
+ * The API refuses while anything still points at the photo, which is what
+ * stops a delete from silently blanking a menu card. A refusal is reported
+ * back rather than thrown: the caller is usually cleaning up after an edit
+ * that has already succeeded, and must not be derailed by it.
+ */
+export async function deleteImage(id, { force = false } = {}) {
+  if (!id) return { ok: true };
+
+  try {
+    await api.admin.deleteImage(id, { force });
+    forgetImageUrl(id);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: error?.code ?? 'failed', message: error?.message };
+  }
 }

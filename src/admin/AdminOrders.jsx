@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  listOrders,
   setOrderStatus,
   acknowledgeOrder,
   nextStatusFor,
@@ -8,11 +7,12 @@ import {
   findStatus,
   ORDER_STATUS,
 } from '../lib/orders';
-import { subscribe } from '../lib/repository';
+import { useOrderFeed } from './useOrderFeed';
+import { useAdminAction } from './useAdminAction';
+import { useCatalog } from '../context/CatalogContext';
 import { ORDER_TYPE } from '../data/store';
 import Thumb from '../components/Thumb';
 import { formatPence } from '../lib/money';
-import { lineUnitPence } from '../lib/pricing';
 import { formatTime, formatDateTime } from '../lib/hours';
 import {
   playChime,
@@ -32,92 +32,100 @@ const FILTERS = [
   { id: 'cancelled', label: 'Cancelled' },
 ];
 
+/**
+ * What to ask the API for, per filter.
+ *
+ * The server does the filtering: pulling every order the shop has ever taken
+ * onto a kitchen tablet in order to hide most of them gets slower every week.
+ */
+const FILTER_QUERY = {
+  active: { scope: 'active' },
+  new: { scope: 'active' },
+  all: { scope: 'all' },
+  complete: { scope: 'all', status: 'complete' },
+  cancelled: { scope: 'all', status: 'cancelled' },
+};
+
 export default function AdminOrders() {
-  const [orders, setOrders] = useState(() => listOrders());
   const [filter, setFilter] = useState('active');
   const [expanded, setExpanded] = useState(null);
   const [permission, setPermission] = useState(() => notificationPermission());
 
-  // References we've already alerted on, so a re-render never re-chimes.
-  const alertedRef = useRef(new Set(listOrders().map((order) => order.reference)));
+  const { orders, unacknowledgedCount, loading, error, refresh } = useOrderFeed(
+    FILTER_QUERY[filter],
+  );
+  const { run, busy } = useAdminAction();
 
-  useEffect(() => {
-    function reload() {
-      const next = listOrders();
-
-      const fresh = next.filter(
-        (order) => !alertedRef.current.has(order.reference) && order.status !== 'cancelled',
-      );
-
-      if (fresh.length > 0) {
-        playChime(fresh.length > 1 ? 3 : 2);
-        fresh.forEach((order) => {
-          alertedRef.current.add(order.reference);
-          notifyNewOrder(order);
-        });
-      }
-
-      // Keep the set in step with reality so it can't grow forever.
-      for (const order of next) alertedRef.current.add(order.reference);
-
-      setOrders(next);
-    }
-
-    const unsubscribe = subscribe(reload);
-    // Backstop for same-tab writes and any missed storage event.
-    const id = setInterval(reload, 5000);
-
-    return () => {
-      unsubscribe();
-      clearInterval(id);
-      restoreTitle();
-    };
-  }, []);
-
-  const pending = useMemo(
-    () => orders.filter((order) => !order.acknowledgedAt && order.status !== 'cancelled'),
-    [orders],
+  // Order lines carry the name and price the customer was charged, but not the
+  // photo — that belongs to the item, which may have changed since. Looked up
+  // live so the kitchen sees the picture it has now.
+  const { allItems } = useCatalog();
+  const itemsById = useMemo(
+    () => new Map(allItems.map((item) => [item.id, item])),
+    [allItems],
   );
 
+  // References we've already alerted on, so a re-render never re-chimes.
+  const alertedRef = useRef(null);
+
   useEffect(() => {
-    flashTitle(pending.length);
-    return () => restoreTitle();
-  }, [pending.length]);
+    if (loading) return;
 
-  const visible = useMemo(() => {
-    switch (filter) {
-      case 'active':
-        return orders
-          .filter((order) => order.status !== 'complete' && order.status !== 'cancelled')
-          .sort((a, b) => new Date(a.placedAt) - new Date(b.placedAt));
-      case 'new':
-        return orders.filter((order) => !order.acknowledgedAt && order.status !== 'cancelled');
-      case 'complete':
-        return orders.filter((order) => order.status === 'complete');
-      case 'cancelled':
-        return orders.filter((order) => order.status === 'cancelled');
-      default:
-        return orders;
+    // The first load is the existing backlog, not new arrivals — chiming for
+    // all of it every time the screen opens would be unusable.
+    if (alertedRef.current === null) {
+      alertedRef.current = new Set(orders.map((order) => order.reference));
+      return;
     }
-  }, [orders, filter]);
 
-  function advance(order) {
+    const fresh = orders.filter(
+      (order) => !alertedRef.current.has(order.reference) && order.status !== 'cancelled',
+    );
+
+    if (fresh.length > 0) {
+      playChime(fresh.length > 1 ? 3 : 2);
+      fresh.forEach((order) => notifyNewOrder(order));
+    }
+
+    for (const order of orders) alertedRef.current.add(order.reference);
+  }, [orders, loading]);
+
+  useEffect(() => {
+    flashTitle(unacknowledgedCount);
+    return () => restoreTitle();
+  }, [unacknowledgedCount]);
+
+  const visible = useMemo(
+    () =>
+      filter === 'new'
+        ? orders.filter((order) => !order.acknowledgedAt && order.status !== 'cancelled')
+        : orders,
+    [orders, filter],
+  );
+
+  async function advance(order) {
     const next = nextStatusFor(order);
     if (!next) return;
-    if (!order.acknowledgedAt) acknowledgeOrder(order.reference);
-    setOrderStatus(order.reference, next.id);
-    setOrders(listOrders());
+
+    await run(async () => {
+      if (!order.acknowledgedAt) await acknowledgeOrder(order.reference);
+      await setOrderStatus(order.reference, next.id);
+    });
+    refresh();
   }
 
-  function setStatus(order, statusId) {
-    setOrderStatus(order.reference, statusId);
-    setOrders(listOrders());
+  async function setStatus(order, statusId) {
+    await run(() => setOrderStatus(order.reference, statusId));
+    refresh();
   }
 
-  function open(order) {
-    if (!order.acknowledgedAt) acknowledgeOrder(order.reference);
+  async function open(order) {
     setExpanded(expanded === order.reference ? null : order.reference);
-    setOrders(listOrders());
+
+    if (!order.acknowledgedAt) {
+      await run(() => acknowledgeOrder(order.reference));
+      refresh();
+    }
   }
 
   async function enableNotifications() {
@@ -129,9 +137,9 @@ export default function AdminOrders() {
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-4xl text-ink-950">Orders</h1>
 
-        {pending.length > 0 && (
+        {unacknowledgedCount > 0 && (
           <span className="chip animate-pulse bg-chilli-500 text-white">
-            {pending.length} new
+            {unacknowledgedCount} new
           </span>
         )}
 
@@ -159,13 +167,24 @@ export default function AdminOrders() {
         audioArmed={isAudioArmed()}
       />
 
-      {visible.length === 0 ? (
+      {/* A failed poll leaves the list alone — a blank kitchen screen mid-
+          service is worse than a slightly stale one, and the next tick usually
+          recovers on its own. */}
+      {error && (
+        <p className="mt-4 rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">
+          Could not reach the server ({error.message}) — showing the last list that loaded.
+        </p>
+      )}
+
+      {loading && visible.length === 0 ? (
+        <p className="mt-6 text-sm text-ink-500">Loading orders…</p>
+      ) : visible.length === 0 ? (
         <div className="card mt-6 grid place-items-center py-20 text-center">
           <span className="text-5xl" aria-hidden="true">🧾</span>
           <p className="mt-4 font-semibold text-ink-800">No orders here</p>
           <p className="mt-1 max-w-sm text-sm text-ink-500">
-            Orders placed on this device show up here the moment they land. Open the shop in
-            another tab and place one to see the alert fire.
+            New orders appear within a few seconds of a customer placing one, wherever they
+            ordered from.
           </p>
         </div>
       ) : (
@@ -174,6 +193,8 @@ export default function AdminOrders() {
             <OrderCard
               key={order.reference}
               order={order}
+              item={(line) => itemsById.get(line.itemId)}
+              busy={busy}
               expanded={expanded === order.reference}
               onToggle={() => open(order)}
               onAdvance={() => advance(order)}
@@ -216,12 +237,13 @@ const TONE_CLASS = {
   cancelled: 'bg-surface-100 text-ink-500',
 };
 
-function OrderCard({ order, expanded, onToggle, onAdvance, onSetStatus }) {
+function OrderCard({ order, item, busy, expanded, onToggle, onAdvance, onSetStatus }) {
   const status = findStatus(order.status);
   const next = nextStatusFor(order);
   const isNew = !order.acknowledgedAt && order.status !== 'cancelled';
   const isDelivery = order.orderType === ORDER_TYPE.DELIVERY;
   const late = new Date(order.readyAt) < new Date() && order.status !== 'complete' && order.status !== 'cancelled';
+  const itemCount = order.lines.reduce((sum, line) => sum + line.quantity, 0);
 
   return (
     <li className={`card overflow-hidden ${isNew ? 'border-chilli-500' : ''}`}>
@@ -240,7 +262,7 @@ function OrderCard({ order, expanded, onToggle, onAdvance, onSetStatus }) {
             {isNew && <span className="chip bg-chilli-500 text-white">New</span>}
           </span>
           <span className="block text-sm text-ink-800">
-            {order.customer?.name ?? 'Customer'} · {order.totals.itemCount} items
+            {order.customer?.name ?? 'Customer'} · {itemCount} item{itemCount === 1 ? '' : 's'}
           </span>
         </span>
 
@@ -271,12 +293,12 @@ function OrderCard({ order, expanded, onToggle, onAdvance, onSetStatus }) {
                 Items
               </h3>
               <ul className="mt-2 grid gap-2">
-                {order.lines.map((line) => (
-                  <li key={line.lineId} className="flex gap-3 text-sm">
+                {order.lines.map((line, index) => (
+                  <li key={index} className="flex gap-3 text-sm">
                     <span className="tabular-nums text-ink-500">{line.quantity}×</span>
                     <Thumb
-                      imageId={line.imageId}
-                      emoji={line.emoji}
+                      imageId={item(line)?.imageId}
+                      emoji={item(line)?.emoji}
                       className="h-9 w-9 shrink-0"
                       rounded="rounded-md"
                       emojiClass="text-base"
@@ -298,7 +320,7 @@ function OrderCard({ order, expanded, onToggle, onAdvance, onSetStatus }) {
                       )}
                     </span>
                     <span className="tabular-nums text-ink-800">
-                      {formatPence(lineUnitPence(line) * line.quantity)}
+                      {formatPence(line.totalPence)}
                     </span>
                   </li>
                 ))}
@@ -327,10 +349,11 @@ function OrderCard({ order, expanded, onToggle, onAdvance, onSetStatus }) {
                   <p className="mt-1 text-sm text-ink-800">
                     {order.address.line1}, {order.address.postcode}
                   </p>
-                  {order.address.notes && (
-                    <p className="text-sm italic text-ink-500">“{order.address.notes}”</p>
-                  )}
                 </>
+              )}
+
+              {order.customer?.notes && (
+                <p className="mt-2 text-sm italic text-ink-500">“{order.customer.notes}”</p>
               )}
 
               <h3 className="mt-4 text-sm font-semibold uppercase tracking-wider text-ink-500">
@@ -374,7 +397,12 @@ function OrderCard({ order, expanded, onToggle, onAdvance, onSetStatus }) {
 
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-surface-200 pt-4">
             {next && (
-              <button type="button" onClick={onAdvance} className="btn-primary px-5 py-2.5 text-xs">
+              <button
+                type="button"
+                onClick={onAdvance}
+                disabled={busy}
+                className="btn-primary px-5 py-2.5 text-xs disabled:opacity-50"
+              >
                 Mark {next.label.toLowerCase()}
               </button>
             )}
@@ -382,6 +410,7 @@ function OrderCard({ order, expanded, onToggle, onAdvance, onSetStatus }) {
             <select
               value={order.status}
               onChange={(event) => onSetStatus(event.target.value)}
+              disabled={busy}
               className="field w-auto py-2 text-xs"
               aria-label="Set status"
             >
@@ -397,7 +426,8 @@ function OrderCard({ order, expanded, onToggle, onAdvance, onSetStatus }) {
               <button
                 type="button"
                 onClick={() => onSetStatus('cancelled')}
-                className="btn-ghost ml-auto px-3 py-2 text-xs hover:text-chilli-500"
+                disabled={busy}
+                className="btn-ghost ml-auto px-3 py-2 text-xs hover:text-chilli-500 disabled:opacity-50"
               >
                 Cancel order
               </button>

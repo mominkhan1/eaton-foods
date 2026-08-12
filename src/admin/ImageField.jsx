@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import Thumb from '../components/Thumb';
 import {
-  processAndStoreImage,
+  processAndUploadImage,
   deleteImage,
   formatBytes,
   IMAGE_ERRORS,
@@ -12,8 +12,12 @@ import {
  * Upload / replace / remove the picture for a category or item.
  *
  * `value` is the stored image id (or null). `onChange` receives the new id.
- * The previous image is deleted only once a replacement has stored
+ * The previous image is deleted only once a replacement has uploaded
  * successfully, so a failed upload never destroys the existing picture.
+ *
+ * The old photo is deleted with `force`, because by this point the record has
+ * already been pointed at the replacement and the server's "still in use"
+ * guard would otherwise refuse and leave the file orphaned on disk.
  */
 export default function ImageField({ value, onChange, emoji, label = 'Photo' }) {
   const inputRef = useRef(null);
@@ -29,10 +33,12 @@ export default function ImageField({ value, onChange, emoji, label = 'Photo' }) 
     setError(null);
     setInfo(null);
 
-    const result = await processAndStoreImage(file);
+    const result = await processAndUploadImage(file);
 
     if (!result.ok) {
-      setError(IMAGE_ERRORS[result.reason] ?? 'That image could not be used.');
+      // The API writes its refusals for a person to read ("Images must be 6MB
+      // or smaller"), so show that in preference to the generic message.
+      setError(result.message ?? IMAGE_ERRORS[result.reason] ?? 'That image could not be used.');
       setBusy(false);
       return;
     }
@@ -41,7 +47,7 @@ export default function ImageField({ value, onChange, emoji, label = 'Photo' }) 
     onChange(result.id);
 
     // Only now is it safe to drop the old one.
-    if (previous) await deleteImage(previous);
+    if (previous) await deleteImage(previous, { force: true });
 
     setInfo(
       `${result.width}×${result.height} · ${formatBytes(result.bytes)}` +
@@ -63,7 +69,7 @@ export default function ImageField({ value, onChange, emoji, label = 'Photo' }) 
     onChange(null);
     setInfo(null);
     setError(null);
-    if (previous) await deleteImage(previous);
+    if (previous) await deleteImage(previous, { force: true });
   }
 
   return (
@@ -96,7 +102,7 @@ export default function ImageField({ value, onChange, emoji, label = 'Photo' }) 
               disabled={busy}
               className="btn-secondary px-4 py-2 text-xs"
             >
-              {busy ? 'Processing…' : value ? 'Replace' : 'Upload photo'}
+              {busy ? 'Uploading…' : value ? 'Replace' : 'Upload photo'}
             </button>
 
             {value && (
@@ -117,7 +123,7 @@ export default function ImageField({ value, onChange, emoji, label = 'Photo' }) 
             ) : info ? (
               <span className="text-leaf-500">Saved · {info}</span>
             ) : (
-              `Drop an image or browse. Resized to ${MAX_EDGE}px and re-encoded before saving.`
+              `Drop an image or browse. Resized to ${MAX_EDGE}px and re-encoded before uploading.`
             )}
           </p>
 

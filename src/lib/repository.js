@@ -1,78 +1,87 @@
 /**
  * Data layer.
  *
- * Everything mutable — the catalog, trading hours and orders — is read and
- * written through here. Today it is backed by `localStorage`; swapping in an
- * API means reimplementing the read/write pairs in this one file.
+ * The catalog, trading hours, hero banners and the coupon all live in MySQL and
+ * are read and written through the API. This module is the one place that
+ * knows that: everything else reads a snapshot from here and subscribes for
+ * changes.
  *
- * IMPORTANT: `localStorage` is per-browser. The admin panel therefore only
- * sees orders placed in the *same browser*. Cross-tab updates work (via the
- * `storage` event), which is enough to demo the whole loop, but a real shop
- * needs a server. See README § Not yet wired up.
+ * WHY A SNAPSHOT. Reads are synchronous (`getCatalog()`, `getHours()`) because
+ * the whole render tree — the menu, the hero, the opening-hours engine, the
+ * basket's promo check — asks for this data during render, dozens of times a
+ * second. Threading a promise through all of that would turn every component
+ * into a loading state for data that changed once, minutes ago. So the API
+ * response is held in memory and handed out as-is; `hydrate()` fills it,
+ * `subscribe()` announces a change, and the writes below are async because
+ * they are the only things that actually go to the network.
+ *
+ * Until `hydrate()` resolves, the getters return the seed data from src/data.
+ * That keeps the first paint composed rather than empty, and keeps this module
+ * usable in Node (the smoke test) where there is no API to call.
  */
 
+import { api } from './api.js';
+import { registerImageUrls } from './images.js';
 import {
   seedCategories,
   seedMenuItems,
   seedModifierGroups,
 } from '../data/menu.js';
 import { seedShifts, seedClosedDates, orderSetup } from '../data/store.js';
-import {
-  seedBanners,
-  seedBannerSettings,
-  clampAutoplaySeconds,
-  clampIntensity,
-} from '../data/banners.js';
+import { seedBanners, seedBannerSettings } from '../data/banners.js';
 
-/*
- * Bump a key when its seed data changes shape or content — a stored catalog
- * always wins over the seed, so without a bump an existing browser would keep
- * serving the previous menu forever.
- *
- * catalog v3: the real Eat On menu replaced the placeholder one.
- */
-const KEYS = {
-  catalog: 'eaton.catalog.v3',
-  hours: 'eaton.hours.v2',
-  orders: 'eaton.orders.v2',
-  banners: 'eaton.banners.v1',
-  promo: 'eaton.promo.v1',
+export const MANUAL_STATUS = {
+  AUTO: 'auto',
+  OPEN: 'open',
+  CLOSED: 'closed',
 };
 
-/** Node (and private browsing) fall back to memory so nothing throws. */
-const memory = new Map();
+// ── Snapshot ───────────────────────────────────────────────────────────────
 
-const storage = (() => {
-  try {
-    if (typeof localStorage === 'undefined') throw new Error('no localStorage');
-    localStorage.getItem('__probe__');
-    return localStorage;
-  } catch {
-    return {
-      getItem: (key) => (memory.has(key) ? memory.get(key) : null),
-      setItem: (key, value) => memory.set(key, value),
-      removeItem: (key) => memory.delete(key),
-    };
-  }
-})();
-
-function read(key, fallback) {
-  try {
-    const raw = storage.getItem(key);
-    if (raw === null) return fallback;
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
+function seedCatalog() {
+  return {
+    categories: structuredClone(seedCategories),
+    items: structuredClone(seedMenuItems),
+    modifierGroups: structuredClone(seedModifierGroups),
+  };
 }
 
-function write(key, value) {
-  try {
-    storage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Quota or private mode — the in-memory cache below still holds the value
-    // for this session.
-  }
+function seedHours() {
+  return {
+    shifts: structuredClone(seedShifts),
+    closedDates: structuredClone(seedClosedDates),
+    // `auto` follows the schedule; the other two override it, which is what
+    // the shop needs when the fryer breaks or a rush runs long.
+    manualStatus: MANUAL_STATUS.AUTO,
+  };
+}
+
+function seedBannerState() {
+  return {
+    slides: structuredClone(seedBanners),
+    settings: { ...seedBannerSettings },
+  };
+}
+
+const snapshot = {
+  catalog: seedCatalog(),
+  hours: seedHours(),
+  banners: seedBannerState(),
+  promo: { ...orderSetup.promo },
+};
+
+/** False until the API has answered — the UI shows this as a loading state. */
+let hydrated = false;
+
+/** The last hydrate failure, so screens can offer a retry with a reason. */
+let hydrationError = null;
+
+export function isHydrated() {
+  return hydrated;
+}
+
+export function getHydrationError() {
+  return hydrationError;
 }
 
 // ── Subscriptions ──────────────────────────────────────────────────────────
@@ -88,108 +97,164 @@ function emit(event) {
   for (const listener of listeners) listener(event);
 }
 
-// Another tab changed something — drop the cache and tell everyone.
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (event) => {
-    if (!Object.values(KEYS).includes(event.key)) return;
-    invalidateCache();
-    emit({ type: 'external', key: event.key });
-  });
-}
+// ── Applying server responses ──────────────────────────────────────────────
+//
+// Each of these takes a payload in the API's shape and installs it. They are
+// exported for the smoke test, which has no server to talk to and needs a way
+// to put the store into a known state.
 
-const cache = { catalog: null, hours: null, orders: null, banners: null };
-
-// ── Catalog ────────────────────────────────────────────────────────────────
-
-function seedCatalog() {
-  return {
-    categories: structuredClone(seedCategories),
-    items: structuredClone(seedMenuItems),
-    modifierGroups: structuredClone(seedModifierGroups),
+export function applyCatalog(catalog) {
+  if (!catalog) return;
+  registerImageUrls(catalog);
+  snapshot.catalog = {
+    categories: catalog.categories ?? [],
+    items: catalog.items ?? [],
+    modifierGroups: catalog.modifierGroups ?? {},
   };
-}
-
-export function getCatalog() {
-  if (!cache.catalog) {
-    const stored = read(KEYS.catalog, null);
-    cache.catalog = stored ?? seedCatalog();
-    if (!stored) write(KEYS.catalog, cache.catalog);
-  }
-  return cache.catalog;
-}
-
-function saveCatalog(catalog) {
-  cache.catalog = catalog;
-  write(KEYS.catalog, catalog);
   emit({ type: 'catalog' });
 }
 
-export function saveCategory(category) {
-  const catalog = getCatalog();
-  const categories = [...catalog.categories];
-  const index = categories.findIndex((candidate) => candidate.id === category.id);
+export function applyHours(hours) {
+  if (!hours) return;
+  snapshot.hours = {
+    shifts: hours.shifts ?? [],
+    closedDates: hours.closedDates ?? [],
+    manualStatus: hours.manualStatus ?? MANUAL_STATUS.AUTO,
+  };
+  emit({ type: 'hours' });
+}
 
-  if (index === -1) categories.push(category);
-  else categories[index] = { ...categories[index], ...category };
+export function applyBanners(banners) {
+  if (!banners) return;
+  registerImageUrls(banners);
+  snapshot.banners = {
+    slides: banners.slides ?? [],
+    // Merge the seed underneath, so a setting gaining a field reads a default
+    // rather than `undefined` on a shop whose stored copy predates it.
+    settings: { ...seedBannerSettings, ...banners.settings },
+  };
+  emit({ type: 'banners' });
+}
 
-  saveCatalog({ ...catalog, categories });
+export function applyPromo(promo) {
+  if (!promo) return;
+  snapshot.promo = { ...orderSetup.promo, ...promo };
+  emit({ type: 'promo' });
+}
+
+// ── Hydration ──────────────────────────────────────────────────────────────
+
+/**
+ * Load everything the app needs in one pass.
+ *
+ * `admin` asks for the unpublished rows too: the storefront must never see a
+ * hidden item, but the panel that manages them has to.
+ *
+ * The four requests go out together rather than in sequence — they do not
+ * depend on each other, and on a phone connection four round trips one after
+ * another is the difference between a fast first paint and a slow one.
+ */
+export async function hydrate({ admin = false, signal } = {}) {
+  try {
+    const [catalog, hours, banners, promo] = await Promise.all([
+      admin ? api.admin.getCatalog({ signal }) : api.getCatalog({ signal }),
+      api.getHours({ signal }),
+      admin ? api.admin.getBanners({ signal }) : api.getBanners({ signal }),
+      api.getPromo({ signal }),
+    ]);
+
+    applyCatalog(catalog);
+    applyHours(hours);
+    applyBanners(banners);
+    applyPromo(promo);
+
+    hydrated = true;
+    hydrationError = null;
+    emit({ type: 'hydrated' });
+
+    return { ok: true };
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+
+    hydrationError = error;
+    emit({ type: 'hydration-error' });
+
+    return { ok: false, error };
+  }
+}
+
+/** Re-read the catalog after a write. */
+async function refreshCatalog({ admin = true } = {}) {
+  applyCatalog(admin ? await api.admin.getCatalog() : await api.getCatalog());
+}
+
+// ── Catalog ────────────────────────────────────────────────────────────────
+
+export function getCatalog() {
+  return snapshot.catalog;
+}
+
+export async function saveCategory(category) {
+  await api.admin.saveCategory(category);
+  await refreshCatalog();
   return category;
 }
 
 /**
- * Removing a category would orphan its items, so this refuses while any
- * remain. The caller decides whether to move or delete them first.
+ * Removing a category would orphan its items, so the API refuses while any
+ * remain. The refusal is turned back into the `{ ok, reason, count }` shape
+ * the admin screen already knows how to explain.
  */
-export function deleteCategory(categoryId) {
-  const catalog = getCatalog();
-  const orphans = catalog.items.filter((item) => item.categoryId === categoryId);
-
-  if (orphans.length > 0) {
-    return { ok: false, reason: 'has-items', count: orphans.length };
+export async function deleteCategory(categoryId) {
+  try {
+    await api.admin.deleteCategory(categoryId);
+  } catch (error) {
+    if (error?.code === 'has_items') {
+      return { ok: false, reason: 'has-items', count: error.count ?? 0 };
+    }
+    throw error;
   }
 
-  saveCatalog({
-    ...catalog,
-    categories: catalog.categories.filter((category) => category.id !== categoryId),
-  });
-
+  await refreshCatalog();
   return { ok: true };
 }
 
-export function reorderCategories(orderedIds) {
-  const catalog = getCatalog();
-  const categories = catalog.categories.map((category) => ({
-    ...category,
-    displayOrder: orderedIds.indexOf(category.id) + 1,
-  }));
-  saveCatalog({ ...catalog, categories });
+export async function reorderCategories(orderedIds) {
+  await api.admin.reorderCategories(orderedIds);
+  await refreshCatalog();
 }
 
-export function saveItem(item) {
-  const catalog = getCatalog();
-  const items = [...catalog.items];
-  const index = items.findIndex((candidate) => candidate.id === item.id);
+/**
+ * Save an item.
+ *
+ * The API replaces the row wholesale, so a partial patch would blank whatever
+ * it left out. Callers that mean "change one field" get merged over the stored
+ * item first — which is what keeps an unrelated edit from dropping the photo.
+ */
+export async function saveItem(item) {
+  const existing = snapshot.catalog.items.find((candidate) => candidate.id === item.id);
+  const merged = existing ? { ...existing, ...item } : item;
 
-  if (index === -1) items.push(item);
-  else items[index] = { ...items[index], ...item };
-
-  saveCatalog({ ...catalog, items });
-  return item;
+  await api.admin.saveItem(merged);
+  await refreshCatalog();
+  return merged;
 }
 
-export function deleteItem(itemId) {
-  const catalog = getCatalog();
-  saveCatalog({ ...catalog, items: catalog.items.filter((item) => item.id !== itemId) });
+export async function deleteItem(itemId) {
+  await api.admin.deleteItem(itemId);
+  await refreshCatalog();
+}
+
+/** Soft availability toggle — keeps the item but hides it from the menu. */
+export async function setItemPublished(itemId, isPublished) {
+  return saveItem({ id: itemId, isPublished });
 }
 
 // ── Option (modifier) groups ───────────────────────────────────────────────
 
-export function saveModifierGroup(group) {
-  const catalog = getCatalog();
-  saveCatalog({
-    ...catalog,
-    modifierGroups: { ...catalog.modifierGroups, [group.id]: group },
-  });
+export async function saveModifierGroup(group) {
+  await api.admin.saveModifierGroup(group);
+  await refreshCatalog();
   return group;
 }
 
@@ -199,246 +264,102 @@ export function itemsUsingModifierGroup(groupId) {
 
 /**
  * Deleting a group that items still reference would leave them silently
- * missing an option the kitchen expects, so this refuses by default.
+ * missing an option the kitchen expects, so the API refuses by default.
  * `force` detaches it from every item first.
  */
-export function deleteModifierGroup(groupId, { force = false } = {}) {
-  const inUse = itemsUsingModifierGroup(groupId);
+export async function deleteModifierGroup(groupId, { force = false } = {}) {
+  let response;
 
-  if (inUse.length > 0 && !force) {
-    return {
-      ok: false,
-      reason: 'in-use',
-      count: inUse.length,
-      items: inUse.map((item) => item.name),
-    };
+  try {
+    response = await api.admin.deleteModifierGroup(groupId, { force });
+  } catch (error) {
+    if (error?.code === 'group_in_use') {
+      return {
+        ok: false,
+        reason: 'in-use',
+        count: error.count ?? 0,
+        items: error.items ?? [],
+      };
+    }
+    throw error;
   }
 
-  const catalog = getCatalog();
-  const modifierGroups = { ...catalog.modifierGroups };
-  delete modifierGroups[groupId];
-
-  saveCatalog({
-    ...catalog,
-    modifierGroups,
-    items: catalog.items.map((item) =>
-      (item.modifierGroups ?? []).includes(groupId)
-        ? { ...item, modifierGroups: item.modifierGroups.filter((id) => id !== groupId) }
-        : item,
-    ),
-  });
-
-  return { ok: true, detachedFrom: inUse.length };
-}
-
-/** Soft availability toggle — keeps the item but hides it from the menu. */
-export function setItemPublished(itemId, isPublished) {
-  const catalog = getCatalog();
-  saveCatalog({
-    ...catalog,
-    items: catalog.items.map((item) =>
-      item.id === itemId ? { ...item, isPublished } : item,
-    ),
-  });
+  await refreshCatalog();
+  return { ok: true, detachedFrom: response?.detachedFrom ?? 0 };
 }
 
 // ── Trading hours ──────────────────────────────────────────────────────────
 
-export const MANUAL_STATUS = {
-  AUTO: 'auto',
-  OPEN: 'open',
-  CLOSED: 'closed',
-};
-
-function seedHours() {
-  return {
-    shifts: structuredClone(seedShifts),
-    closedDates: structuredClone(seedClosedDates),
-    // `auto` follows the schedule; the other two override it, which is what
-    // the shop needs when the fryer breaks or a rush runs long.
-    manualStatus: MANUAL_STATUS.AUTO,
-  };
-}
-
 export function getHours() {
-  if (!cache.hours) {
-    const stored = read(KEYS.hours, null);
-    cache.hours = stored ?? seedHours();
-    if (!stored) write(KEYS.hours, cache.hours);
-  }
-  return cache.hours;
+  return snapshot.hours;
 }
 
-function saveHours(hours) {
-  cache.hours = hours;
-  write(KEYS.hours, hours);
-  emit({ type: 'hours' });
+export async function saveShifts(shifts) {
+  applyHours(await api.admin.saveHours({ shifts }));
 }
 
-export function saveShifts(shifts) {
-  saveHours({ ...getHours(), shifts });
+export async function setManualStatus(manualStatus) {
+  applyHours(await api.admin.saveHours({ manualStatus }));
 }
 
-export function setManualStatus(manualStatus) {
-  saveHours({ ...getHours(), manualStatus });
-}
-
-export function saveClosedDates(closedDates) {
-  saveHours({ ...getHours(), closedDates });
+export async function saveClosedDates(closedDates) {
+  applyHours(await api.admin.saveHours({ closedDates }));
 }
 
 // ── Hero banners ───────────────────────────────────────────────────────────
 
-function seedBannerState() {
-  return {
-    slides: structuredClone(seedBanners),
-    settings: { ...seedBannerSettings },
-  };
-}
-
 export function getBanners() {
-  if (!cache.banners) {
-    const stored = read(KEYS.banners, null);
-
-    if (stored) {
-      // Settings gain keys as features land. Merging the seed underneath means
-      // an existing browser picks up new defaults instead of reading
-      // `undefined` — no storage-key bump, and the shop keeps its slides.
-      cache.banners = {
-        slides: stored.slides ?? [],
-        settings: { ...seedBannerSettings, ...stored.settings },
-      };
-    } else {
-      cache.banners = seedBannerState();
-      write(KEYS.banners, cache.banners);
-    }
-  }
-  return cache.banners;
+  return snapshot.banners;
 }
 
-function saveBannerState(state) {
-  // Renumber on every write so the order is always dense and 1-based, whatever
-  // the caller did.
-  const slides = [...state.slides]
-    .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
-    .map((slide, index) => ({ ...slide, displayOrder: index + 1 }));
-
-  cache.banners = { ...state, slides };
-  write(KEYS.banners, cache.banners);
-  emit({ type: 'banners' });
-}
-
-export function saveBanner(banner) {
-  const state = getBanners();
-  const slides = [...state.slides];
-  const index = slides.findIndex((candidate) => candidate.id === banner.id);
-
-  if (index === -1) {
-    slides.push({ ...banner, displayOrder: banner.displayOrder ?? slides.length + 1 });
-  } else {
-    slides[index] = { ...slides[index], ...banner };
-  }
-
-  saveBannerState({ ...state, slides });
+export async function saveBanner(banner) {
+  const existing = snapshot.banners.slides.find((slide) => slide.id === banner.id);
+  applyBanners(await api.admin.saveBanner(existing ? { ...existing, ...banner } : banner));
   return banner;
 }
 
-export function deleteBanner(bannerId) {
-  const state = getBanners();
-  saveBannerState({
-    ...state,
-    slides: state.slides.filter((slide) => slide.id !== bannerId),
-  });
+export async function deleteBanner(bannerId) {
+  applyBanners(await api.admin.deleteBanner(bannerId));
 }
 
-export function setBannerPublished(bannerId, isPublished) {
-  const state = getBanners();
-  saveBannerState({
-    ...state,
-    slides: state.slides.map((slide) =>
-      slide.id === bannerId ? { ...slide, isPublished } : slide,
-    ),
-  });
+export async function setBannerPublished(bannerId, isPublished) {
+  return saveBanner({ id: bannerId, isPublished });
 }
 
 /** Move a slide one place earlier (-1) or later (+1). */
-export function moveBanner(bannerId, direction) {
-  const state = getBanners();
-  const slides = [...state.slides].sort((a, b) => a.displayOrder - b.displayOrder);
+export async function moveBanner(bannerId, direction) {
+  const slides = [...snapshot.banners.slides].sort((a, b) => a.displayOrder - b.displayOrder);
   const index = slides.findIndex((slide) => slide.id === bannerId);
   const target = index + direction;
 
   if (index === -1 || target < 0 || target >= slides.length) return false;
 
   [slides[index], slides[target]] = [slides[target], slides[index]];
-  // The renumber in saveBannerState needs the new positions to sort by.
-  saveBannerState({
-    ...state,
-    slides: slides.map((slide, position) => ({ ...slide, displayOrder: position + 1 })),
-  });
+  applyBanners(await api.admin.reorderBanners(slides.map((slide) => slide.id)));
 
   return true;
 }
 
-export function saveBannerSettings(patch) {
-  const state = getBanners();
-  const settings = { ...state.settings, ...patch };
-
-  if ('autoplaySeconds' in patch) {
-    settings.autoplaySeconds = clampAutoplaySeconds(patch.autoplaySeconds);
-  }
-  if ('emberIntensity' in patch) {
-    settings.emberIntensity = clampIntensity(
-      patch.emberIntensity,
-      seedBannerSettings.emberIntensity,
-    );
-  }
-
-  saveBannerState({ ...state, settings });
+export async function saveBannerSettings(patch) {
+  applyBanners(await api.admin.saveBannerSettings(patch));
 }
 
-export function resetBanners() {
-  saveBannerState(seedBannerState());
+// ── Promotion ──────────────────────────────────────────────────────────────
+
+/**
+ * The first-order coupon shown in the top strip and honoured at checkout.
+ *
+ * `getPromo` is what `pricing.evaluatePromo` validates against, so changing
+ * the code here changes what the basket accepts. The server re-checks it at
+ * checkout regardless — this copy decides what the customer is *shown*, never
+ * what they are charged.
+ */
+export function getPromo() {
+  return snapshot.promo;
 }
 
-// ── Orders ─────────────────────────────────────────────────────────────────
-
-export function getOrders() {
-  if (!cache.orders) cache.orders = read(KEYS.orders, {});
-  return cache.orders;
-}
-
-function saveOrders(orders) {
-  cache.orders = orders;
-  write(KEYS.orders, orders);
-  emit({ type: 'orders' });
-}
-
-export function putOrder(order) {
-  saveOrders({ ...getOrders(), [order.reference]: order });
-  return order;
-}
-
-export function patchOrder(reference, patch) {
-  const orders = getOrders();
-  const existing = orders[reference];
-  if (!existing) return null;
-
-  const updated = { ...existing, ...patch };
-  saveOrders({ ...orders, [reference]: updated });
-  return updated;
-}
-
-export function findOrder(reference) {
-  if (!reference) return null;
-  return getOrders()[reference.trim().toUpperCase()] ?? null;
-}
-
-/** Newest first. */
-export function listOrders() {
-  return Object.values(getOrders()).sort(
-    (a, b) => new Date(b.placedAt) - new Date(a.placedAt),
-  );
+export async function savePromo(patch) {
+  applyPromo(await api.admin.savePromo(patch));
 }
 
 // ── Maintenance ────────────────────────────────────────────────────────────
@@ -446,60 +367,10 @@ export function listOrders() {
 /**
  * Every image id the app still needs, across all collections.
  *
- * Pruning must use this rather than a single screen's own list — pruning from
- * the menu alone would treat every banner photo as an orphan and delete it.
+ * Anything asking "is this photo still in use?" must use this rather than a
+ * single screen's own list — checking the menu alone would treat every banner
+ * photo as an orphan.
  */
-// ── Promotion ──────────────────────────────────────────────────────────────
-
-/**
- * The first-order coupon shown in the top strip and honoured at checkout.
- *
- * Seeded from `orderSetup.promo` and then owned by the shop. `getPromo` is
- * what `pricing.evaluatePromo` validates against, so changing the code here
- * changes what the basket accepts — there is no second copy to keep in step.
- */
-export function getPromo() {
-  if (!cache.promo) {
-    const stored = read(KEYS.promo, null);
-    // Seed underneath, so a promo gaining a field does not read `undefined`.
-    cache.promo = stored ? { ...orderSetup.promo, ...stored } : { ...orderSetup.promo };
-    if (!stored) write(KEYS.promo, cache.promo);
-  }
-  return cache.promo;
-}
-
-export function savePromo(patch) {
-  const promo = { ...getPromo(), ...patch };
-
-  // A coupon has to survive being typed in by a customer: store it upper-case
-  // and trimmed once here rather than normalising at every comparison.
-  if ('code' in patch) promo.code = String(patch.code ?? '').trim().toUpperCase();
-
-  // Nonsense values here silently break the basket maths, so clamp on write.
-  if ('percentage' in patch) {
-    promo.percentage = clampNumber(patch.percentage, 0, 100, orderSetup.promo.percentage);
-  }
-  if ('minimumSpend' in patch) {
-    promo.minimumSpend = clampNumber(patch.minimumSpend, 0, 1000, orderSetup.promo.minimumSpend);
-  }
-
-  cache.promo = promo;
-  write(KEYS.promo, promo);
-  emit({ type: 'promo' });
-}
-
-export function resetPromo() {
-  cache.promo = { ...orderSetup.promo };
-  write(KEYS.promo, cache.promo);
-  emit({ type: 'promo' });
-}
-
-function clampNumber(value, min, max, fallback) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(n * 100) / 100));
-}
-
 export function allReferencedImageIds() {
   const catalog = getCatalog();
   const banners = getBanners();
@@ -512,23 +383,13 @@ export function allReferencedImageIds() {
   ].filter(Boolean);
 }
 
-/** Drop every local override and go back to the seed data. */
-export function resetCatalog() {
-  saveCatalog(seedCatalog());
-}
-
-export function resetHours() {
-  saveHours(seedHours());
-}
-
-export function clearOrders() {
-  saveOrders({});
-}
-
-/** Test hook — wipes the in-memory cache without touching storage. */
-export function invalidateCache() {
-  cache.catalog = null;
-  cache.hours = null;
-  cache.orders = null;
-  cache.banners = null;
+/** Test hook — puts the store back to the seed data without touching the API. */
+export function resetToSeed() {
+  snapshot.catalog = seedCatalog();
+  snapshot.hours = seedHours();
+  snapshot.banners = seedBannerState();
+  snapshot.promo = { ...orderSetup.promo };
+  hydrated = false;
+  hydrationError = null;
+  emit({ type: 'reset' });
 }
