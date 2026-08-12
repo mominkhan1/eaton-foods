@@ -315,8 +315,46 @@ function assert_same_origin(): void
         }
     }
 
-    $allowed = rtrim((string) config('site_url', ''), '/');
-    if ($allowed !== '' && rtrim($origin, '/') !== $allowed) {
-        fail('bad_origin', 'Request blocked.', 403);
+    $origin = rtrim($origin, '/');
+
+    foreach (allowed_origins() as $allowed) {
+        if ($origin === $allowed) {
+            return;
+        }
     }
+
+    fail('bad_origin', 'Request blocked.', 403);
+}
+
+/**
+ * Origins permitted to make state-changing requests.
+ *
+ * Production is exactly one: the site itself.
+ *
+ * Development also accepts the other loopback spelling. `localhost` and
+ * `127.0.0.1` are different origins to a browser, and a developer who opens
+ * the "wrong" one otherwise gets an opaque 403 on every write — which looks
+ * like a broken login rather than a URL mismatch.
+ */
+function allowed_origins(): array
+{
+    $siteUrl = rtrim((string) config('site_url', ''), '/');
+
+    $origins = $siteUrl === '' ? [] : [$siteUrl];
+
+    if (is_production()) {
+        return $origins;
+    }
+
+    foreach ($origins as $origin) {
+        $swapped = str_contains($origin, '//localhost')
+            ? str_replace('//localhost', '//127.0.0.1', $origin)
+            : str_replace('//127.0.0.1', '//localhost', $origin);
+
+        if ($swapped !== $origin) {
+            $origins[] = $swapped;
+        }
+    }
+
+    return array_values(array_unique($origins));
 }

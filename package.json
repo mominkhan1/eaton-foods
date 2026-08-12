@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "test": "node scripts/smoke.mjs",
     "menu": "node scripts/print-menu.mjs",
-    "seed:sql": "node scripts/generate-seed.mjs"
+    "seed:sql": "node scripts/generate-seed.mjs",
+    "api": "php -S 127.0.0.1:8123 -t server/api server/api/index.php"
   },
   "dependencies": {
     "react": "^19.1.0",
