@@ -17,6 +17,40 @@ import mark from '../assets/eat-on-mark.png';
 
 const AdminAuthContext = createContext(null);
 
+/** Backoff between session probes, in ms. Four attempts over ~4.6 seconds. */
+const PROBE_DELAYS = [400, 1200, 3000];
+
+/**
+ * Ask the server who we are, retrying transient failures.
+ *
+ * Pure: it returns the outcome rather than touching state, so the caller owns
+ * when that lands. Without the retry a one-second blip — patchy wifi on a
+ * kitchen tablet, or a dev server mid-restart — wedges the whole panel on an
+ * error screen until someone thinks to reload. During a rush that is orders
+ * going unseen.
+ *
+ * Returns `{ user, status }`, or null if the probe was aborted.
+ */
+async function resolveSession(signal) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const data = await api.me({ signal });
+      return { user: data?.user ?? null, status: 'ready' };
+    } catch (error) {
+      if (error?.name === 'AbortError') return null;
+
+      // A 401 is a clean "not signed in", not a failure — show the form.
+      const transient = error instanceof ApiError && error.isTransient;
+      if (!transient || attempt >= PROBE_DELAYS.length) {
+        return { user: null, status: transient ? 'offline' : 'ready' };
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, PROBE_DELAYS[attempt]));
+      if (signal?.aborted) return null;
+    }
+  }
+}
+
 export function AdminAuthProvider({ children }) {
   const [user, setUser] = useState(null);
   // 'checking' until the session probe finishes. Rendering the login form
@@ -24,25 +58,49 @@ export function AdminAuthProvider({ children }) {
   // refresh, which reads as being logged out.
   const [status, setStatus] = useState('checking');
 
+  const [probeId, setProbeId] = useState(0);
+
   useEffect(() => {
     const controller = new AbortController();
+    let cancelled = false;
 
-    api
-      .me({ signal: controller.signal })
-      .then((data) => {
-        setUser(data?.user ?? null);
-        setStatus('ready');
-      })
-      .catch((error) => {
-        if (error?.name === 'AbortError') return;
-        // A network failure here is not "signed out" — it means the API is
-        // unreachable, which needs a different message from a login prompt.
-        setUser(null);
-        setStatus(error instanceof ApiError && error.isTransient ? 'offline' : 'ready');
-      });
+    (async () => {
+      const outcome = await resolveSession(controller.signal);
+      if (cancelled || outcome === null) return;
 
-    return () => controller.abort();
+      setUser(outcome.user);
+      setStatus(outcome.status);
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+    // probeId is the retry trigger: bumping it re-runs the probe.
+  }, [probeId]);
+
+  const retry = useCallback(() => {
+    setStatus('checking');
+    setProbeId((n) => n + 1);
   }, []);
+
+  // Coming back online, or returning to the tab, is the natural moment to
+  // re-check rather than making someone hunt for a button.
+  useEffect(() => {
+    if (status !== 'offline') return undefined;
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') retry();
+    };
+
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [status, retry]);
 
   const signIn = useCallback(async (email, password) => {
     const data = await api.login(email, password);
@@ -67,8 +125,8 @@ export function AdminAuthProvider({ children }) {
   );
 
   const value = useMemo(
-    () => ({ user, status, isAuthed: Boolean(user), signIn, signOut, can }),
-    [user, status, signIn, signOut, can],
+    () => ({ user, status, isAuthed: Boolean(user), signIn, signOut, can, retry }),
+    [user, status, signIn, signOut, can, retry],
   );
 
   return <AdminAuthContext.Provider value={value}>{children}</AdminAuthContext.Provider>;
@@ -81,7 +139,7 @@ export function useAdminAuth() {
 }
 
 export function AdminLogin() {
-  const { signIn, status } = useAdminAuth();
+  const { signIn, status, retry } = useAdminAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -116,10 +174,11 @@ export function AdminLogin() {
         <div className="card w-full max-w-sm p-6 text-center">
           <h1 className="text-2xl text-ink-950">Cannot reach the server</h1>
           <p className="mt-2 text-sm text-ink-500">
-            The admin panel could not contact the site. Check your connection, then reload.
+            The admin panel could not contact the site after several tries. It will keep trying
+            on its own when the connection comes back.
           </p>
-          <button type="button" className="btn-primary mt-5 w-full" onClick={() => window.location.reload()}>
-            Reload
+          <button type="button" className="btn-primary mt-5 w-full" onClick={retry}>
+            Try again
           </button>
         </div>
       </div>
