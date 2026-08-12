@@ -1,0 +1,260 @@
+@import 'tailwindcss';
+
+/*
+ * Brand fonts, self-hosted (latin subset) so there is no runtime dependency on
+ * a font CDN and nothing to block first paint.
+ *
+ *   Bebas Neue   every heading — condensed all-caps display
+ *   Poppins      body copy, buttons, labels
+ *   Caveat Brush the brush accent on the hero headline only, which is the
+ *                script word in the reference artwork
+ */
+@font-face {
+  font-family: 'Bebas Neue';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/bebas-neue-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Caveat Brush';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/caveat-brush-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/poppins-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./assets/fonts/poppins-500.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/poppins-600.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/poppins-700.woff2') format('woff2');
+}
+
+/*
+ * Eat On palette, sampled from the logo artwork (EAT ON Logo.pdf).
+ *
+ * The three brand colours are measured, not guessed — they are the dominant
+ * opaque pixels in the logo: the amber disc behind the truck, the "EAT"
+ * wordmark black, and the "ON" wordmark orange.
+ *
+ * Two ramps, and the names mean what they say:
+ *   surface-*  light grounds, palest first — the page, cards, borders
+ *   ink-*      type and dark furniture, darkest first
+ *
+ * Measured contrast on white (AA wants 4.5:1 for body copy, 3:1 for large type
+ * and UI edges):
+ *   ink-950 18.7   ink-800 14.3   ink-700 13.8   ink-500 6.0   ink-400 3.7
+ *   chilli-600 7.4   chilli-500 5.5   brand-600 5.2   leaf-500 4.1
+ *   brand-500 4.0  ← large type and decorative fills only
+ *   amber-400 1.8  ← a fill, never type, and never type on top of it
+ *
+ * White label on a brand fill is the one to watch: on brand-500 it is 4.00, so
+ * anything with a small label (buttons, chips, nav pills) uses brand-600 (5.2)
+ * and keeps brand-500 for large headings and untyped fills.
+ */
+@theme {
+  /* Brand — straight off the logo. */
+  --color-brand-700: #a53716;
+  --color-brand-600: #bf421c; /* text-safe orange on white */
+  --color-brand-500: #da5327; /* the "ON" wordmark and plate icon */
+  --color-brand-400: #ee8b22; /* the truck body */
+
+  --color-amber-500: #f0a91f;
+  --color-amber-400: #faba3a; /* the disc behind the truck */
+  --color-amber-300: #ffd27a;
+  --color-amber-100: #fef3d9;
+
+  /* Type. ink-900 is the "EAT" wordmark; ink-700 the warm outline brown. */
+  --color-ink-950: #131211;
+  --color-ink-900: #1c1c1a;
+  --color-ink-800: #2c2a26;
+  --color-ink-700: #3c291b;
+  --color-ink-500: #6b6257;
+  --color-ink-400: #8b8378;
+
+  /* Surfaces, warmed very slightly so white does not read as clinical. */
+  --color-surface-0: #ffffff;
+  --color-surface-50: #fdfaf5;
+  --color-surface-100: #f7f1e8;
+  --color-surface-200: #ebe3d7;
+  --color-surface-300: #dbd0c0;
+
+  --color-leaf-500: #2f8f45;
+  --color-leaf-600: #247136;
+  --color-chilli-500: #c2341f;
+  --color-chilli-600: #a12817;
+
+  --font-display: 'Bebas Neue', 'Arial Narrow', system-ui, sans-serif;
+  --font-script: 'Caveat Brush', 'Segoe Script', cursive;
+  --font-sans: 'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    /* Sticky category nav must not cover the section it scrolled to. */
+    scroll-padding-top: 9rem;
+  }
+
+  body {
+    @apply bg-surface-0 text-ink-800 font-sans antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    /* Bebas Neue is condensed all-caps and sets very tight by default; a little
+       tracking stops large headings looking cramped. */
+    @apply font-display tracking-wide;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-500;
+  }
+}
+
+@layer components {
+  /*
+   * Tailwind v4 cannot @apply a class defined in the same layer, so the shared
+   * button base is repeated per variant rather than composed from `.btn`.
+   */
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-3
+           text-sm font-semibold transition-colors disabled:cursor-not-allowed
+           disabled:opacity-40;
+  }
+
+  .btn-primary {
+    /* brand-600 rather than the logo's brand-500: a 14px semibold white label
+       needs 4.5:1, and white on brand-500 is only 4.00. Hover goes darker
+       still — brand-400 is the truck orange, where white falls to ~2.6:1. */
+    @apply bg-brand-600 text-white hover:bg-brand-700;
+  }
+
+  .btn-secondary {
+    @apply border border-surface-300 bg-surface-50 text-ink-800 hover:border-brand-500;
+  }
+
+  .btn-ghost {
+    @apply text-ink-500 hover:text-ink-800;
+  }
+
+  .card {
+    @apply rounded-2xl border border-surface-200 bg-surface-50;
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-surface-300 bg-surface-0 px-4 py-3 text-sm
+           text-ink-800 placeholder:text-ink-500/70
+           focus:border-brand-500 focus:outline-none;
+  }
+
+  .chip {
+    @apply rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider;
+  }
+}
+
+/* Hero slide entrance. Suppressed for anyone who asked for less motion. */
+@keyframes hero-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-hero-in {
+  animation: hero-in 420ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-in {
+    animation: none;
+  }
+}
+
+/*
+ * Drifting embers. Composited on the GPU (transform + opacity only), so this
+ * costs no main-thread work and the browser throttles it when hidden.
+ */
+@keyframes ember-rise {
+  0% {
+    transform: translate3d(0, 12vh, 0) scale(0.6);
+    opacity: 0;
+  }
+  12% {
+    opacity: var(--ember-peak, 0.6);
+  }
+  85% {
+    opacity: var(--ember-peak, 0.6);
+  }
+  100% {
+    transform: translate3d(var(--ember-drift, 0), -105vh, 0) scale(1);
+    opacity: 0;
+  }
+}
+
+.ember {
+  position: absolute;
+  bottom: -6vh;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    var(--color-amber-300) 0%,
+    var(--color-brand-500) 45%,
+    transparent 72%
+  );
+  box-shadow: 0 0 6px 1px rgb(218 83 39 / 40%);
+  animation-name: ember-rise;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ember {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* Firefox keeps a scrollbar gutter on the category rail otherwise. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
