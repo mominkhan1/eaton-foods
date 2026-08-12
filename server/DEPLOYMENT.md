@@ -415,5 +415,17 @@ Back-end change: upload the changed files under `public_html/api/`.
 Menu data change in `src/data/`: run `npm run seed:sql`, then import the new
 `server/seed.sql` in phpMyAdmin. It upserts, so orders and staff are untouched.
 
-Schema change: back up first (phpMyAdmin → Export), then apply the migration.
-`schema.sql` creates tables from scratch and will not alter existing ones.
+Schema change: back up first (phpMyAdmin → Export), then apply the migration
+from `server/migrations/` — **Import** tab → Choose File → **Go**, exactly like
+the schema import in section 2. `schema.sql` creates tables from scratch and
+will not alter existing ones, so a database that already has data needs the
+migration rather than a re-import.
+
+### Migrations to date
+
+| File | What it does | Needed if |
+|---|---|---|
+| `001-banner-slide-fields.sql` | Widens `banners` to hold a whole slide — the eyebrow, the orange second line, the offer price, the second button, and the open/closed line. | Your database was created before this change. Without it, saving a slide fails and roughly half of what the shop typed is dropped. |
+
+Each is safe to run once on an existing database and unnecessary on a fresh
+install, which gets the same columns from `schema.sql`.

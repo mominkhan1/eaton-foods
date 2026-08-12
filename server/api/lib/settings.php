@@ -118,8 +118,9 @@ function default_banner_settings(): array
 {
     return [
         'autoplaySeconds' => 6,
-        'emberIntensity'  => 0.5,
+        'emberIntensity'  => 0.4,
         'isAutoplayOn'    => true,
+        'areEmbersOn'     => true,
     ];
 }
 
@@ -249,20 +250,28 @@ function get_banners(bool $includeUnpublished = false): array
 {
     $where = $includeUnpublished ? '' : 'WHERE is_published = 1';
 
+    // Keys match src/data/banners.js exactly, so a slide read back from the API
+    // drops straight into the editor and the hero without a translation step.
     $slides = array_map(static function (array $row): array {
         return [
-            'id'                => $row['id'],
-            'title'             => $row['title'],
-            'subtitle'          => $row['subtitle'],
-            'body'              => $row['body'],
-            'buttonText'        => $row['button_text'],
-            'buttonHref'        => $row['button_href'],
-            'imageId'           => $row['image_id'],
-            'imageUrl'          => image_url($row['image_id']),
-            'backgroundImageId' => $row['background_image_id'],
+            'id'                 => $row['id'],
+            'eyebrow'            => (string) ($row['eyebrow'] ?? ''),
+            'heading'            => (string) ($row['title'] ?? ''),
+            'headingAccent'      => (string) ($row['subtitle'] ?? ''),
+            'description'        => (string) ($row['body'] ?? ''),
+            'priceNote'          => (string) ($row['price_note'] ?? ''),
+            'price'              => (string) ($row['price'] ?? ''),
+            'primaryLabel'       => (string) ($row['button_text'] ?? ''),
+            'primaryHref'        => (string) ($row['button_href'] ?? ''),
+            'secondaryLabel'     => (string) ($row['button2_text'] ?? ''),
+            'secondaryHref'      => (string) ($row['button2_href'] ?? ''),
+            'showStoreStatus'    => (bool) ($row['show_store_status'] ?? false),
+            'imageId'            => $row['image_id'],
+            'imageUrl'           => image_url($row['image_id']),
+            'backgroundImageId'  => $row['background_image_id'],
             'backgroundImageUrl' => image_url($row['background_image_id']),
-            'displayOrder'      => (int) $row['display_order'],
-            'isPublished'       => (bool) $row['is_published'],
+            'displayOrder'       => (int) $row['display_order'],
+            'isPublished'        => (bool) $row['is_published'],
         ];
     }, db_all("SELECT * FROM banners {$where} ORDER BY display_order, id"));
 

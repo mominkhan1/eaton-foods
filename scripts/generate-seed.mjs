@@ -148,17 +148,26 @@ lines.push('');
 
 // ── Banners ────────────────────────────────────────────────────────────────
 
+// The column names are the editor's vocabulary one step removed: title is the
+// heading, subtitle the orange second line, body the description.
 lines.push('-- Hero banners');
 seedBanners.forEach((slide, index) => {
   lines.push(
-    `INSERT INTO banners (id, title, subtitle, body, button_text, button_href, image_id, ` +
-      `background_image_id, display_order, is_published) VALUES (` +
-      `${q(slide.id)}, ${q(slide.title)}, ${q(slide.subtitle)}, ${q(slide.body)}, ` +
-      `${q(slide.buttonText)}, ${q(slide.buttonHref)}, ${q(slide.imageId)}, ` +
-      `${q(slide.backgroundImageId)}, ${slide.displayOrder ?? index + 1}, ` +
+    `INSERT INTO banners (id, eyebrow, title, subtitle, body, price_note, price, ` +
+      `button_text, button_href, button2_text, button2_href, show_store_status, ` +
+      `image_id, background_image_id, display_order, is_published) VALUES (` +
+      `${q(slide.id)}, ${q(slide.eyebrow)}, ${q(slide.heading)}, ${q(slide.headingAccent)}, ` +
+      `${q(slide.description)}, ${q(slide.priceNote)}, ${q(slide.price)}, ` +
+      `${q(slide.primaryLabel)}, ${q(slide.primaryHref)}, ` +
+      `${q(slide.secondaryLabel)}, ${q(slide.secondaryHref)}, ` +
+      `${bool(slide.showStoreStatus ?? false)}, ` +
+      `${q(slide.imageId)}, ${q(slide.backgroundImageId)}, ${slide.displayOrder ?? index + 1}, ` +
       `${bool(slide.isPublished ?? true)}) ` +
-      `ON DUPLICATE KEY UPDATE title=VALUES(title), subtitle=VALUES(subtitle), body=VALUES(body), ` +
-      `button_text=VALUES(button_text), display_order=VALUES(display_order);`,
+      `ON DUPLICATE KEY UPDATE eyebrow=VALUES(eyebrow), title=VALUES(title), ` +
+      `subtitle=VALUES(subtitle), body=VALUES(body), price_note=VALUES(price_note), ` +
+      `price=VALUES(price), button_text=VALUES(button_text), button_href=VALUES(button_href), ` +
+      `button2_text=VALUES(button2_text), button2_href=VALUES(button2_href), ` +
+      `show_store_status=VALUES(show_store_status), display_order=VALUES(display_order);`,
   );
 });
 lines.push('');

@@ -217,6 +217,14 @@ route('DELETE', '/admin/banners/{id}', function (array $params): void {
     admin_delete_banner($params['id']);
 });
 
+// '/admin/banners/{id}' also matches this path, but only for PUT and DELETE —
+// the dispatcher keeps looking on a method mismatch, so this POST is reached.
+route('POST', '/admin/banners/reorder', function (): void {
+    require_permission('banners.manage');
+    require __DIR__ . '/routes/admin_settings.php';
+    admin_reorder_banners();
+});
+
 route('PUT', '/admin/banner-settings', function (): void {
     require_permission('banners.manage');
     require __DIR__ . '/routes/admin_settings.php';

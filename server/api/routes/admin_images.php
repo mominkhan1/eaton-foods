@@ -114,13 +114,16 @@ function admin_delete_image(string $id): void
         fail('not_found', 'No such image.', 404);
     }
 
+    // Positional placeholders with the id repeated, not one named `:id` reused
+    // four times: with emulated prepares off, MySQL binds each marker once and
+    // a reused name is rejected outright.
     $uses = (int) (db_one(
         'SELECT
-            (SELECT COUNT(*) FROM items      WHERE image_id = :id)
-          + (SELECT COUNT(*) FROM categories WHERE image_id = :id)
-          + (SELECT COUNT(*) FROM banners    WHERE image_id = :id OR background_image_id = :id)
+            (SELECT COUNT(*) FROM items      WHERE image_id = ?)
+          + (SELECT COUNT(*) FROM categories WHERE image_id = ?)
+          + (SELECT COUNT(*) FROM banners    WHERE image_id = ? OR background_image_id = ?)
           AS n',
-        ['id' => $id]
+        [$id, $id, $id, $id]
     )['n'] ?? 0);
 
     if ($uses > 0 && !need_bool($_GET, 'force', false)) {

@@ -182,13 +182,24 @@ CREATE TABLE closed_dates (
 
 -- ── Hero banners ───────────────────────────────────────────────────────────
 
+-- Column names track the admin editor's own vocabulary: `title` is the
+-- heading, `subtitle` the orange second line, `body` the description, and
+-- `button_*` the main call to action. The remaining columns exist because a
+-- slide carries more than a headline and one button — dropping them here is
+-- how the editor's eyebrow, offer price and second button silently vanish.
 CREATE TABLE banners (
   id                  VARCHAR(64)  NOT NULL,
+  eyebrow             VARCHAR(190) NULL,
   title               VARCHAR(190) NULL,
   subtitle            VARCHAR(255) NULL,
   body                TEXT         NULL,
+  price_note          VARCHAR(120) NULL,
+  price               VARCHAR(60)  NULL,
   button_text         VARCHAR(120) NULL,
   button_href         VARCHAR(255) NULL,
+  button2_text        VARCHAR(120) NULL,
+  button2_href        VARCHAR(255) NULL,
+  show_store_status   TINYINT(1)   NOT NULL DEFAULT 0,
   image_id            VARCHAR(64)  NULL,
   background_image_id VARCHAR(64)  NULL,
   display_order       INT          NOT NULL DEFAULT 0,

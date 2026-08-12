@@ -97,21 +97,32 @@ function admin_save_banner(string $id): void
         : (int) (db_one('SELECT COALESCE(MAX(display_order), 0) + 1 AS n FROM banners')['n'] ?? 1);
 
     db_run(
-        'INSERT INTO banners (id, title, subtitle, body, button_text, button_href,
-                              image_id, background_image_id, display_order, is_published)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        'INSERT INTO banners (id, eyebrow, title, subtitle, body, price_note, price,
+                              button_text, button_href, button2_text, button2_href,
+                              show_store_status, image_id, background_image_id,
+                              display_order, is_published)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
-            title = VALUES(title), subtitle = VALUES(subtitle), body = VALUES(body),
+            eyebrow = VALUES(eyebrow), title = VALUES(title), subtitle = VALUES(subtitle),
+            body = VALUES(body), price_note = VALUES(price_note), price = VALUES(price),
             button_text = VALUES(button_text), button_href = VALUES(button_href),
+            button2_text = VALUES(button2_text), button2_href = VALUES(button2_href),
+            show_store_status = VALUES(show_store_status),
             image_id = VALUES(image_id), background_image_id = VALUES(background_image_id),
             display_order = VALUES(display_order), is_published = VALUES(is_published)',
         [
             $id,
-            opt_string($input, 'title', 190),
-            opt_string($input, 'subtitle', 255),
-            opt_string($input, 'body', 4000),
-            opt_string($input, 'buttonText', 120),
-            opt_string($input, 'buttonHref', 255),
+            opt_string($input, 'eyebrow', 190),
+            opt_string($input, 'heading', 190),
+            opt_string($input, 'headingAccent', 255),
+            opt_string($input, 'description', 4000),
+            opt_string($input, 'priceNote', 120),
+            opt_string($input, 'price', 60),
+            opt_string($input, 'primaryLabel', 120),
+            opt_string($input, 'primaryHref', 255),
+            opt_string($input, 'secondaryLabel', 120),
+            opt_string($input, 'secondaryHref', 255),
+            need_bool($input, 'showStoreStatus', false) ? 1 : 0,
             opt_string($input, 'imageId', 64),
             opt_string($input, 'backgroundImageId', 64),
             $order,
@@ -126,6 +137,33 @@ function admin_save_banner(string $id): void
 function admin_delete_banner(string $id): void
 {
     db_run('DELETE FROM banners WHERE id = ?', [$id]);
+    renumber_banners();
+    json_response(get_banners(true));
+}
+
+/**
+ * POST /api/admin/banners/reorder
+ *
+ * Takes the ids in their new order. The admin panel moves a slide one place at
+ * a time, but sending the whole order rather than a "swap these two" is what
+ * makes the result independent of what the list looked like when the shop
+ * clicked — two quick clicks cannot interleave into a scrambled list.
+ */
+function admin_reorder_banners(): void
+{
+    $ids = body()['orderedIds'] ?? null;
+    if (!is_array($ids)) {
+        fail('invalid_value', "'orderedIds' must be an array of banner ids.", 422);
+    }
+
+    db_transaction(static function () use ($ids): void {
+        foreach (array_values($ids) as $position => $id) {
+            db_run('UPDATE banners SET display_order = ? WHERE id = ?', [$position + 1, (string) $id]);
+        }
+    });
+
+    // Anything the caller left out keeps its old number, which could collide;
+    // the renumber settles it into a clean 1..n.
     renumber_banners();
     json_response(get_banners(true));
 }
@@ -155,6 +193,9 @@ function admin_save_banner_settings(): void
     }
     if (isset($input['isAutoplayOn'])) {
         $current['isAutoplayOn'] = need_bool($input, 'isAutoplayOn', true);
+    }
+    if (isset($input['areEmbersOn'])) {
+        $current['areEmbersOn'] = need_bool($input, 'areEmbersOn', true);
     }
 
     put_setting('banner_settings', $current);
