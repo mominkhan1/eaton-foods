@@ -258,7 +258,9 @@ function get_banners(bool $includeUnpublished = false): array
             'buttonText'        => $row['button_text'],
             'buttonHref'        => $row['button_href'],
             'imageId'           => $row['image_id'],
+            'imageUrl'          => image_url($row['image_id']),
             'backgroundImageId' => $row['background_image_id'],
+            'backgroundImageUrl' => image_url($row['background_image_id']),
             'displayOrder'      => (int) $row['display_order'],
             'isPublished'       => (bool) $row['is_published'],
         ];

@@ -14,6 +14,41 @@ declare(strict_types=1);
  * @param bool $includeUnpublished Admin screens need hidden items; the public
  *                                 menu must never see them.
  */
+/**
+ * Public URL for a stored image id, or null.
+ *
+ * The map is loaded once per request rather than joined into every query:
+ * categories, items and banners all need it, and a shop's whole photo library
+ * is a few dozen rows.
+ *
+ * Returning the URL alongside the id means the browser never has to look one
+ * up — the catalog response is enough to render the menu.
+ */
+function image_url_map(): array
+{
+    static $map = null;
+    if ($map !== null) {
+        return $map;
+    }
+
+    $base = rtrim((string) config('uploads_url', '/uploads'), '/');
+
+    $map = [];
+    foreach (db_all('SELECT id, filename FROM images') as $row) {
+        $map[$row['id']] = $base . '/' . $row['filename'];
+    }
+
+    return $map;
+}
+
+function image_url(?string $imageId): ?string
+{
+    if ($imageId === null || $imageId === '') {
+        return null;
+    }
+    return image_url_map()[$imageId] ?? null;
+}
+
 function get_catalog(bool $includeUnpublished = false): array
 {
     $categoryWhere = $includeUnpublished ? '' : 'WHERE is_published = 1';
@@ -60,6 +95,7 @@ function get_catalog(bool $includeUnpublished = false): array
             'description'    => $row['description'],
             'emoji'          => $row['emoji'],
             'imageId'        => $row['image_id'],
+            'imageUrl'       => image_url($row['image_id']),
             'popular'        => (bool) $row['is_popular'],
             'isPublished'    => (bool) $row['is_published'],
             'displayOrder'   => (int) $row['display_order'],
@@ -79,6 +115,7 @@ function get_catalog(bool $includeUnpublished = false): array
                 'description'  => $row['description'],
                 'emoji'        => $row['emoji'],
                 'imageId'      => $row['image_id'],
+                'imageUrl'     => image_url($row['image_id']),
                 'displayOrder' => (int) $row['display_order'],
                 'isPublished'  => (bool) $row['is_published'],
             ];
