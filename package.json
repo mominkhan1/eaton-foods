@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "node scripts/smoke.mjs",
-    "menu": "node scripts/print-menu.mjs"
+    "menu": "node scripts/print-menu.mjs",
+    "seed:sql": "node scripts/generate-seed.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",

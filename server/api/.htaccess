@@ -1,0 +1,37 @@
+# Eat On API — Apache config for cPanel shared hosting.
+
+RewriteEngine On
+
+# Send every request that is not a real file to the front controller.
+# The API has no static assets of its own, so this is effectively "always".
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+
+# Authorization headers are stripped by some CGI/FastCGI setups before PHP
+# sees them. Not used today (auth is cookie-based) but harmless, and saves a
+# confusing debugging session if a token scheme is ever added.
+RewriteCond %{HTTP:Authorization} .
+RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+# The lib/ and routes/ directories are only ever included by index.php.
+# Requesting them directly must not execute or reveal anything.
+RedirectMatch 404 ^/api/(lib|routes)/
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "same-origin"
+</IfModule>
+
+# Never serve the config or logs, wherever they end up.
+<FilesMatch "\.(sql|log|md|example\.php)$">
+    Require all denied
+</FilesMatch>
+
+# Uploads can be large-ish photos; the app downscales before sending, but a
+# raw phone photo is still several megabytes.
+<IfModule mod_php.c>
+    php_value upload_max_filesize 8M
+    php_value post_max_size 10M
+</IfModule>

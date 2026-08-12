@@ -6,3 +6,10 @@ dist-ssr
 .DS_Store
 .env
 .env.local
+
+# Real backend credentials — database password, Stripe secret key.
+# Only config.example.php belongs in the repo.
+server/config.php
+eaton-config.php
+server/logs/
+*.log
