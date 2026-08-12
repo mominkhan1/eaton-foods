@@ -1,0 +1,19 @@
+# Place this ONCE, by hand, at public_html/uploads/.htaccess
+#
+# It is deliberately NOT deployed automatically: the deploy excludes uploads/
+# so that the shop's menu photos survive every release. Automating this file
+# would mean either wiping those photos or special-casing one file inside an
+# excluded directory.
+#
+# Its job is to make an uploaded file inert. The upload endpoint already checks
+# the actual image bytes rather than trusting the filename, so a disguised .php
+# should never land here — this is the second lock on the same door.
+
+<FilesMatch "\.(php|phtml|phar|php[0-9]|cgi|pl|py|sh|htaccess)$">
+    Require all denied
+</FilesMatch>
+
+# Belt and braces: even if a handler is somehow matched, do not execute it.
+php_flag engine off
+Options -ExecCGI -Indexes
+AddType text/plain .php .phtml .phar .cgi .pl .py .sh

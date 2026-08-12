@@ -1,0 +1,50 @@
+# Deployed to public_html/.htaccess by .github/workflows/deploy.yml
+#
+# Kept under a non-dotted name in the repo so it is visible in file listings
+# and does not apply to the checkout itself.
+
+RewriteEngine On
+
+# HTTPS first. The admin session cookie is Secure, so sign-in cannot work over
+# plain http, and Stripe refuses to run without TLS.
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# The API front controller routes itself.
+RewriteRule ^api/ - [L]
+
+# Real files and directories are served as they are.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Everything else is the React app, so refreshing on /menu still works.
+RewriteRule ^ index.html [L]
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Permissions-Policy "interest-cohort=()"
+</IfModule>
+
+# Asset filenames carry a content hash, so a given URL never changes contents.
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 1 year"
+    ExpiresByType application/javascript "access plus 1 year"
+    ExpiresByType font/woff2 "access plus 1 year"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType image/webp "access plus 1 month"
+</IfModule>
+
+# index.html must NOT be cached, or customers keep running the previous build
+# and never see a menu or price change.
+<Files "index.html">
+    <IfModule mod_headers.c>
+        Header set Cache-Control "no-cache, no-store, must-revalidate"
+    </IfModule>
+</Files>
+
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json
+</IfModule>

@@ -1,0 +1,103 @@
+# Build and deploy to Namecheap.
+#
+# Namecheap shared hosting has no Node, so the site is built here and only the
+# finished files are uploaded. Nothing is compiled on the server.
+#
+# WHAT THIS DOES NOT TOUCH, on purpose:
+#   - eaton-config.php   lives above public_html and holds the database and
+#                        Stripe credentials. It is never in git and must never
+#                        be overwritten by a deploy.
+#   - public_html/uploads/  menu photos uploaded by the shop. Wiping these on
+#                        every deploy would blank the menu images.
+#   - the database       schema changes are applied deliberately, by hand.
+#
+# SETUP — one time, in GitHub → Settings → Secrets and variables → Actions:
+#   FTP_SERVER    your domain or the server hostname from cPanel, e.g. ftp.yourdomain.co.uk
+#   FTP_USERNAME  an FTP account created in cPanel → FTP Accounts
+#   FTP_PASSWORD  that account's password
+#
+# Create a DEDICATED FTP account whose home directory is public_html, rather
+# than using your main cPanel login. If the token leaks, the damage is limited
+# to the web root instead of the whole hosting account.
+
+name: Deploy to Namecheap
+
+on:
+  push:
+    branches: [main]
+  # Lets you deploy without pushing, from the Actions tab.
+  workflow_dispatch:
+
+# A second push while a deploy is running would interleave two uploads over
+# FTP and leave a mix of old and new files live.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # `npm ci` not `npm install`: installs exactly what package-lock.json
+      # pins, so a deploy cannot pick up a different dependency version than
+      # the one tested locally.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # Tests gate the deploy. A red build must not reach customers.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Check PHP syntax
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq php-cli
+          find server -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      # Assemble exactly what goes on the server, so the FTP step uploads one
+      # directory and nothing can leak in from the repo root.
+      - name: Stage the release
+        run: |
+          mkdir -p release/api
+          cp -r dist/* release/
+          cp -r server/api/* release/api/
+          cp server/api/.htaccess release/api/.htaccess
+          cp deploy/htaccess-root release/.htaccess
+          test -f release/index.html
+          test -f release/api/index.php
+          test -f release/.htaccess
+          test -f release/api/.htaccess
+          echo "staged $(find release -type f | wc -l) files"
+
+      - name: Upload
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          # FTPS, not plain FTP — otherwise the password crosses the internet
+          # in the clear on every deploy.
+          protocol: ftps
+          local-dir: ./release/
+          server-dir: ./
+          # Old hashed asset filenames pile up otherwise; the action removes
+          # files that are no longer part of the release.
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            uploads/**
