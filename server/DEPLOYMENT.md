@@ -52,12 +52,28 @@ password. All three include the `cpuser_` prefix except the password.
 cPanel → **phpMyAdmin** → select your database in the left sidebar.
 
 1. **Import** tab → Choose File → `server/schema.sql` → **Go**.
-   Expect "Import has been successfully finished, 16 queries executed".
+   Expect "Import has been successfully finished".
 2. **Import** again → `server/seed.sql` → **Go**.
    This loads the real menu: 7 categories, 18 items, 6 option groups, 14
    shifts, 3 banners.
 
-Check the **Structure** tab shows 17 tables and that `items` holds 18 rows.
+Check the **Structure** tab shows **18 tables**. These row counts are what a
+correct import looks like — verified against a real import, so anything else
+means something did not load:
+
+| table | rows |
+|---|---|
+| `categories` | 7 |
+| `items` | 18 |
+| `item_sizes` | 28 |
+| `modifier_groups` | 6 |
+| `modifier_options` | 26 |
+| `item_modifier_groups` | 27 |
+| `shifts` | 14 |
+| `closed_dates` | 2 |
+| `banners` | 3 |
+| `settings` | 5 |
+| `users` | 0 (until section 7) |
 
 > Re-importing `seed.sql` later is safe — every statement upserts. It refreshes
 > the menu without touching orders, staff or takings. Regenerate it with
