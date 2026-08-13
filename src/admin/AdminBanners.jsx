@@ -305,9 +305,17 @@ export default function AdminBanners() {
             const broken = !isBannerRenderable(slide);
 
             return (
+              /*
+               * `min-w-0` is what keeps this row inside the page on a phone.
+               * A grid item defaults to `min-width: auto`, so without it the
+               * card refuses to shrink below the natural width of its own
+               * contents — the reorder column, the thumbnail, the headline and
+               * three buttons came to 645px and pushed the whole screen
+               * sideways.
+               */
               <li
                 key={slide.id}
-                className={`card flex flex-wrap items-center gap-4 p-4 ${
+                className={`card flex min-w-0 flex-wrap items-center gap-4 p-4 ${
                   hidden ? 'opacity-60' : ''
                 }`}
               >
@@ -336,7 +344,9 @@ export default function AdminBanners() {
                   emojiClass="text-xl"
                 />
 
-                <span className="min-w-0 flex-1">
+                {/* A floor, so the headline gets a readable column instead of
+                    wrapping one word per line beside the thumbnail. */}
+                <span className="min-w-[11rem] flex-1">
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-ink-950">
                       {slide.heading || <em className="text-ink-500">Untitled slide</em>}{' '}

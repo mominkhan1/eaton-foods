@@ -278,7 +278,10 @@ function ItemsTab({
                         emojiClass="text-lg"
                       />
 
-                      <span className="min-w-0 flex-1">
+                      {/* A floor rather than min-w-0: with a 0 basis this column
+                          collapsed to nothing on a phone and the item name ran
+                          underneath the price. The floor makes the row wrap. */}
+                      <span className="min-w-[10rem] flex-1">
                         <span className="flex flex-wrap items-center gap-2">
                           <span className="font-medium text-ink-950">{item.name}</span>
                           {item.popular && (
@@ -298,12 +301,12 @@ function ItemsTab({
                         )}
                       </span>
 
-                      <span className="text-sm tabular-nums text-ink-800">
+                      <span className="shrink-0 text-sm tabular-nums text-ink-800">
                         {item.sizes.length > 1 && 'from '}
                         {formatPence(toPence(fromPrice(item)))}
                       </span>
 
-                      <span className="flex gap-1">
+                      <span className="ml-auto flex shrink-0 gap-1">
                         <button
                           type="button"
                           onClick={() => onSetPublished(item)}

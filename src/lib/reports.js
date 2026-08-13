@@ -29,6 +29,19 @@ export const GRANULARITY_LABELS = {
   [GRANULARITY.MONTHLY]: 'Monthly',
 };
 
+/**
+ * The period as a noun: "revenue by day", "latest week".
+ *
+ * Spelled out rather than derived from the label. Stripping "ly" turns
+ * "weekly" into "week" and "monthly" into "month", but it also turns "daily"
+ * into "dai" — which is what the reports screen has been showing.
+ */
+export const GRANULARITY_NOUNS = {
+  [GRANULARITY.DAILY]: 'day',
+  [GRANULARITY.WEEKLY]: 'week',
+  [GRANULARITY.MONTHLY]: 'month',
+};
+
 /** How many buckets each granularity shows, and how many days that spans. */
 export const WINDOW_DAYS = {
   [GRANULARITY.DAILY]: 14,

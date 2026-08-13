@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatPence } from '../lib/money';
 
 /**
@@ -48,8 +48,36 @@ function niceCeiling(value) {
   return 10 * magnitude;
 }
 
+/**
+ * Roughly what one x label occupies once the SVG has been scaled to fit, in
+ * the chart's own coordinates. "Wed 12" at 11px is about 40 wide; 52 leaves
+ * a gap so neighbours do not touch.
+ */
+const LABEL_SLOT = 52;
+
 export default function RevenueChart({ buckets, granularity }) {
   const [hovered, setHovered] = useState(null);
+
+  /*
+   * The SVG is a fixed viewBox scaled to its container, so the x labels shrink
+   * with it. On a phone the whole 840-unit width is painted into ~330 real
+   * pixels — every label is a quarter of its designed size and fourteen of
+   * them run into one grey smear. Thinning has to be decided from the width
+   * the chart actually got, which only the browser knows.
+   */
+  const frameRef = useRef(null);
+  const [renderedWidth, setRenderedWidth] = useState(0);
+
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+
+    const observer = new ResizeObserver(([entry]) => {
+      setRenderedWidth(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const maxRevenue = Math.max(...buckets.map((bucket) => bucket.revenue), 0);
   const ceiling = niceCeiling(maxRevenue);
@@ -64,11 +92,18 @@ export default function RevenueChart({ buckets, granularity }) {
     y: PAD.top + PLOT.height * (1 - fraction),
   }));
 
-  // Thin the x labels when the buckets outnumber the space for them.
-  const labelEvery = buckets.length > 16 ? Math.ceil(buckets.length / 12) : 1;
+  /*
+   * How many labels fit, in the chart's own units. `renderedWidth` starts at 0
+   * on the very first paint, before the observer has reported — assume the
+   * full design width then, which is what a desktop gets and is corrected a
+   * frame later on anything narrower.
+   */
+  const scale = renderedWidth > 0 ? VIEW.width / renderedWidth : 1;
+  const labelFits = Math.max(2, Math.floor(PLOT.width / (LABEL_SLOT * scale)));
+  const labelEvery = Math.max(1, Math.ceil(buckets.length / labelFits));
 
   return (
-    <figure className="relative m-0">
+    <figure ref={frameRef} className="relative m-0">
       <svg
         viewBox={`0 0 ${VIEW.width} ${VIEW.height}`}
         className="w-full"

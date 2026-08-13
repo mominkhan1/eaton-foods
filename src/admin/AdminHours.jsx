@@ -169,7 +169,10 @@ export default function AdminHours() {
 
             return (
               <div key={day} className="flex flex-wrap items-start gap-4 px-5 py-4">
-                <h3 className="w-28 shrink-0 pt-2 text-sm font-semibold text-ink-950">
+                {/* Full width on a phone: beside the shifts it took 112px of a
+                    358px row, which left too little for "12:00 AM → 11:59 PM"
+                    and split the two ends of one shift across two lines. */}
+                <h3 className="w-full shrink-0 pt-2 text-sm font-semibold text-ink-950 sm:w-28">
                   {DAY_NAMES[day]}
                 </h3>
 
@@ -185,7 +188,7 @@ export default function AdminHours() {
                     >
                       <input
                         type="time"
-                        className="field w-32 tabular-nums"
+                        className="field w-36 tabular-nums"
                         value={secondsToInput(shift.start)}
                         onChange={(event) => updateTime(shift, 'start', event.target.value)}
                         aria-label={`${DAY_NAMES[day]} opening time`}
@@ -193,7 +196,7 @@ export default function AdminHours() {
                       <span className="text-ink-500">→</span>
                       <input
                         type="time"
-                        className="field w-32 tabular-nums"
+                        className="field w-36 tabular-nums"
                         value={secondsToInput(shift.end)}
                         onChange={(event) => updateTime(shift, 'end', event.target.value)}
                         aria-label={`${DAY_NAMES[day]} closing time`}

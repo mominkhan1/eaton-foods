@@ -6,6 +6,7 @@ import {
   reportRange,
   GRANULARITY,
   GRANULARITY_LABELS,
+  GRANULARITY_NOUNS,
 } from '../lib/reports';
 import { api } from '../lib/api';
 import { useCatalog } from '../context/CatalogContext';
@@ -125,7 +126,7 @@ export default function AdminReports() {
           }
         />
         <StatTile
-          label={`Latest ${GRANULARITY_LABELS[granularity].toLowerCase().replace('ly', '')}`}
+          label={`Latest ${GRANULARITY_NOUNS[granularity]}`}
           value={formatPence(report.current?.revenue ?? 0)}
           hint={
             report.changePercent === null
@@ -138,7 +139,7 @@ export default function AdminReports() {
 
       <section className="card mt-4 p-5">
         <h2 className="text-xl text-ink-950">
-          Revenue by {GRANULARITY_LABELS[granularity].toLowerCase().replace('ly', '')}
+          Revenue by {GRANULARITY_NOUNS[granularity]}
         </h2>
         <p className="mt-1 text-sm text-ink-500">
           Peak {formatPence(report.peak?.revenue ?? 0)} on {report.peak?.label}. Cancelled and

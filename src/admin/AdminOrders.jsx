@@ -214,7 +214,9 @@ function AlertStatus({ permission, onEnable, audioArmed }) {
   return (
     <div className="card mt-4 flex flex-wrap items-center gap-3 p-4">
       <BellIcon className="h-6 w-6 shrink-0 text-brand-600" />
-      <p className="flex-1 text-sm text-ink-500">
+      {/* A floor, not a 0 basis: otherwise the button holds its width and this
+          sentence is squeezed into a four-word column down the side of it. */}
+      <p className="min-w-[14rem] flex-1 text-sm text-ink-500">
         {!audioArmed && 'Click anywhere to enable the order chime. '}
         {permission === 'granted'
           ? 'Desktop notifications are on.'

@@ -110,7 +110,11 @@ export default function AdminLayout() {
             </span>
           </Link>
 
-          <div className="ml-auto flex items-center gap-2">
+          {/* Wraps rather than running off the side: the status pill, the
+              three override buttons, the signed-in name and two links come to
+              nearly 400px, which is wider than the phone the kitchen actually
+              uses. */}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <StatusPill open={open} manualStatus={manualStatus} />
 
             {/* Forcing the shop open or shut is a manager decision, not a
