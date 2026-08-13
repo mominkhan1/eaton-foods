@@ -4,6 +4,7 @@ import { useCart } from '../context/CartContext';
 import { useOrder } from '../context/OrderContext';
 import { formatPence } from '../lib/money';
 import { lineUnitPence } from '../lib/pricing';
+import { BasketIcon } from './Icons';
 import OrderSummary from './OrderSummary';
 import PromoField from './PromoField';
 import Thumb from './Thumb';
@@ -67,7 +68,7 @@ export default function CartDrawer() {
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {isEmpty ? (
             <div className="grid place-items-center py-16 text-center">
-              <span className="text-5xl" aria-hidden="true">🍗</span>
+              <BasketIcon className="h-14 w-14 text-brand-500/40" />
               <p className="mt-4 font-semibold text-ink-800">Your basket is empty</p>
               <p className="mt-1 text-sm text-ink-500">Add something from the menu to get going.</p>
             </div>

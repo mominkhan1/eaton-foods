@@ -7,6 +7,7 @@ import { getHours, setManualStatus, MANUAL_STATUS, subscribe } from '../lib/repo
 import { isStoreOpen, isScheduledOpen, formatTime, nextOpenAt } from '../lib/hours';
 import { useOrderFeed } from './useOrderFeed';
 import { armAudio } from '../lib/alerts';
+import { ReceiptIcon, BurgerIcon, ImageIcon, ClockIcon, ChartIcon, DotIcon, DotOutlineIcon } from '../components/Icons';
 import mark from '../assets/eat-on-mark.webp';
 
 /*
@@ -15,11 +16,11 @@ import mark from '../assets/eat-on-mark.webp';
  * refused from — the real check happens server-side on every request.
  */
 const NAV = [
-  { to: '/admin', end: true, label: 'Orders', icon: '🧾', permission: 'orders.view' },
-  { to: '/admin/menu', label: 'Menu', icon: '🍔', permission: 'menu.manage' },
-  { to: '/admin/banners', label: 'Banners', icon: '🖼️', permission: 'banners.manage' },
-  { to: '/admin/hours', label: 'Hours', icon: '🕒', permission: 'hours.manage' },
-  { to: '/admin/reports', label: 'Reports', icon: '📊', permission: 'reports.view' },
+  { to: '/admin', end: true, label: 'Orders', Icon: ReceiptIcon, permission: 'orders.view' },
+  { to: '/admin/menu', label: 'Menu', Icon: BurgerIcon, permission: 'menu.manage' },
+  { to: '/admin/banners', label: 'Banners', Icon: ImageIcon, permission: 'banners.manage' },
+  { to: '/admin/hours', label: 'Hours', Icon: ClockIcon, permission: 'hours.manage' },
+  { to: '/admin/reports', label: 'Reports', Icon: ChartIcon, permission: 'reports.view' },
 ];
 
 export default function AdminLayout() {
@@ -168,7 +169,7 @@ export default function AdminLayout() {
                 }`
               }
             >
-              <span aria-hidden="true">{entry.icon}</span>
+              <entry.Icon className="h-4 w-4" />
               {entry.label}
               {entry.label === 'Orders' && pending > 0 && (
                 <span className="grid h-5 min-w-5 place-items-center rounded-full bg-chilli-500 px-1 text-xs font-bold text-white">
@@ -224,7 +225,7 @@ function StatusPill({ open, manualStatus }) {
         open ? 'bg-leaf-500/15 text-leaf-500' : 'bg-chilli-500/15 text-chilli-500'
       }`}
     >
-      <span aria-hidden="true">{open ? '●' : '○'}</span>
+      {open ? <DotIcon className="h-2.5 w-2.5" /> : <DotOutlineIcon className="h-2.5 w-2.5" />}
       {open ? 'Open' : 'Closed'}
       {manualStatus !== MANUAL_STATUS.AUTO && <span className="opacity-70">(manual)</span>}
     </span>

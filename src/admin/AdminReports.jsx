@@ -10,6 +10,7 @@ import {
 import { api } from '../lib/api';
 import { useCatalog } from '../context/CatalogContext';
 import { formatPence } from '../lib/money';
+import { TrendUpIcon, TrendDownIcon } from '../components/Icons';
 
 /**
  * Revenue and volume, read from the API's aggregated report.
@@ -254,9 +255,9 @@ function StatTile({ label, value, hint, tone }) {
     <div className="card p-4">
       <p className="text-xs font-semibold uppercase tracking-wider text-ink-500">{label}</p>
       <p className="mt-1.5 text-3xl tabular-nums text-ink-950">{value}</p>
-      <p className={`mt-0.5 text-xs ${toneClass}`}>
-        {tone === 'up' && '▲ '}
-        {tone === 'down' && '▼ '}
+      <p className={`mt-0.5 flex items-center gap-1 text-xs ${toneClass}`}>
+        {tone === 'up' && <TrendUpIcon className="h-3 w-3" />}
+        {tone === 'down' && <TrendDownIcon className="h-3 w-3" />}
         {hint}
       </p>
     </div>

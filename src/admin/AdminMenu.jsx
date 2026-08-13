@@ -17,6 +17,7 @@ import ImageField from './ImageField';
 import Thumb from '../components/Thumb';
 import { deleteImage } from '../lib/images';
 import { useAdminAction } from './useAdminAction';
+import { CloseIcon } from '../components/Icons';
 
 export default function AdminMenu() {
   const { allCategories, allItems, modifierGroups } = useCatalog();
@@ -685,7 +686,7 @@ function ItemEditor({ draft, categories, modifierGroups, existingIds, onClose })
                   className="btn-ghost px-3 disabled:opacity-30"
                   aria-label={`Remove size ${index + 1}`}
                 >
-                  ✕
+                  <CloseIcon className="h-3.5 w-3.5" />
                 </button>
               </div>
             ))}

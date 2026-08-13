@@ -14,6 +14,7 @@ import { ORDER_TYPE } from '../data/store';
 import Thumb from '../components/Thumb';
 import { formatPence } from '../lib/money';
 import { formatTime, formatDateTime } from '../lib/hours';
+import { ReceiptIcon, BellIcon, ScooterIcon, StorefrontIcon } from '../components/Icons';
 import {
   playChime,
   flashTitle,
@@ -180,7 +181,7 @@ export default function AdminOrders() {
         <p className="mt-6 text-sm text-ink-500">Loading orders…</p>
       ) : visible.length === 0 ? (
         <div className="card mt-6 grid place-items-center py-20 text-center">
-          <span className="text-5xl" aria-hidden="true">🧾</span>
+          <ReceiptIcon className="h-14 w-14 text-brand-500/40" />
           <p className="mt-4 font-semibold text-ink-800">No orders here</p>
           <p className="mt-1 max-w-sm text-sm text-ink-500">
             New orders appear within a few seconds of a customer placing one, wherever they
@@ -212,7 +213,7 @@ function AlertStatus({ permission, onEnable, audioArmed }) {
 
   return (
     <div className="card mt-4 flex flex-wrap items-center gap-3 p-4">
-      <span className="text-xl" aria-hidden="true">🔔</span>
+      <BellIcon className="h-6 w-6 shrink-0 text-brand-600" />
       <p className="flex-1 text-sm text-ink-500">
         {!audioArmed && 'Click anywhere to enable the order chime. '}
         {permission === 'granted'
@@ -252,7 +253,11 @@ function OrderCard({ order, item, busy, expanded, onToggle, onAdvance, onSetStat
         onClick={onToggle}
         className="flex w-full flex-wrap items-center gap-3 p-4 text-left"
       >
-        <span className="text-2xl" aria-hidden="true">{isDelivery ? '🛵' : '🏪'}</span>
+        {isDelivery ? (
+          <ScooterIcon className="h-7 w-7 shrink-0 text-brand-600" />
+        ) : (
+          <StorefrontIcon className="h-7 w-7 shrink-0 text-brand-600" />
+        )}
 
         <span className="min-w-0">
           <span className="flex items-center gap-2">

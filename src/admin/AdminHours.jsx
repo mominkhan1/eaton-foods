@@ -9,6 +9,7 @@ import {
 import { DAY_NAMES, isScheduledOpen, isStoreOpen, nextOpenAt, formatTime } from '../lib/hours';
 import { useCatalog } from '../context/CatalogContext';
 import { useAdminAction } from './useAdminAction';
+import { CalendarIcon, DotIcon, DotOutlineIcon, CloseIcon } from '../components/Icons';
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7];
 
@@ -110,7 +111,8 @@ export default function AdminHours() {
           <span
             className={`chip ${open ? 'bg-leaf-500/15 text-leaf-500' : 'bg-chilli-500/15 text-chilli-500'}`}
           >
-            {open ? '● Open' : '○ Closed'}
+            {open ? <DotIcon className="h-2.5 w-2.5" /> : <DotOutlineIcon className="h-2.5 w-2.5" />}
+            {open ? 'Open' : 'Closed'}
           </span>
 
           <p className="text-sm text-ink-500">
@@ -125,21 +127,21 @@ export default function AdminHours() {
             onClick={() => run(() => setManualStatus(MANUAL_STATUS.AUTO))}
             title="Follow the schedule"
             body="Normal operation — the times below decide."
-            icon="🗓️"
+            Icon={CalendarIcon}
           />
           <OverrideCard
             active={manualStatus === MANUAL_STATUS.OPEN}
             onClick={() => run(() => setManualStatus(MANUAL_STATUS.OPEN))}
             title="Force open"
             body="Take orders even outside the schedule."
-            icon="🟢"
+            Icon={DotIcon}
           />
           <OverrideCard
             active={manualStatus === MANUAL_STATUS.CLOSED}
             onClick={() => run(() => setManualStatus(MANUAL_STATUS.CLOSED))}
             title="Force closed"
             body="Stop new orders now — kitchen backed up, fryer down."
-            icon="🔴"
+            Icon={DotOutlineIcon}
           />
         </div>
       </section>
@@ -227,7 +229,7 @@ export default function AdminHours() {
                         className="btn-ghost ml-auto px-2 py-1 text-xs hover:text-chilli-500"
                         aria-label="Remove this shift"
                       >
-                        ✕
+                        <CloseIcon className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   ))}
@@ -307,7 +309,7 @@ export default function AdminHours() {
   );
 }
 
-function OverrideCard({ active, onClick, title, body, icon }) {
+function OverrideCard({ active, onClick, title, body, Icon }) {
   return (
     <button
       type="button"
@@ -317,7 +319,7 @@ function OverrideCard({ active, onClick, title, body, icon }) {
         active ? 'border-brand-500 bg-brand-500/8' : 'border-surface-300 hover:border-surface-300/70'
       }`}
     >
-      <span className="text-xl" aria-hidden="true">{icon}</span>
+      <Icon className="h-5 w-5 text-brand-600" />
       <span className="mt-1.5 block font-semibold text-ink-950">{title}</span>
       <span className="mt-0.5 block text-xs text-ink-500">{body}</span>
     </button>

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import Modal from './Modal';
 import { useOrder } from '../context/OrderContext';
 import { scheduleSlots, formatTime } from '../lib/hours';
+import { BoltIcon } from './Icons';
 
 /** ASAP vs a scheduled slot. Slots come from the trading-hours engine. */
 export default function TimingModal({ open, onClose }) {
@@ -36,7 +37,7 @@ export default function TimingModal({ open, onClose }) {
             timing.mode === 'asap' ? 'border-brand-500' : ''
           }`}
         >
-          <span className="text-2xl" aria-hidden="true">⚡</span>
+          <BoltIcon className="h-7 w-7 shrink-0 text-brand-600" />
           <span className="flex-1">
             <span className="block font-semibold text-ink-950">As soon as possible</span>
             <span className="block text-sm text-ink-500">

@@ -19,7 +19,7 @@ import {
  * already been pointed at the replacement and the server's "still in use"
  * guard would otherwise refuse and leave the file orphaned on disk.
  */
-export default function ImageField({ value, onChange, emoji, label = 'Photo' }) {
+export default function ImageField({ value, onChange, emoji, icon, label = 'Photo' }) {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -90,6 +90,7 @@ export default function ImageField({ value, onChange, emoji, label = 'Photo' }) 
         <Thumb
           imageId={value}
           emoji={emoji}
+          icon={icon}
           className="h-20 w-20 shrink-0"
           emojiClass="text-3xl"
         />

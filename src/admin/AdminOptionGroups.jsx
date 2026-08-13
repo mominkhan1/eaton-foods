@@ -9,6 +9,7 @@ import { describeGroupRule } from '../data/menu';
 import { slugify } from '../lib/slug';
 import { toPence, formatPence } from '../lib/money';
 import { useAdminAction } from './useAdminAction';
+import { OptionsIcon, CloseIcon } from '../components/Icons';
 
 /**
  * Option-group manager.
@@ -93,7 +94,7 @@ export default function AdminOptionGroups() {
 
       {groups.length === 0 ? (
         <div className="card mt-5 grid place-items-center py-16 text-center">
-          <span className="text-4xl" aria-hidden="true">🧩</span>
+          <OptionsIcon className="h-11 w-11 text-brand-500/40" />
           <p className="mt-3 font-semibold text-ink-800">No option groups yet</p>
           <p className="mt-1 max-w-sm text-sm text-ink-500">
             Build one for things like spice level, a choice of side, or paid extras.
@@ -460,7 +461,7 @@ function GroupEditor({ draft, existingIds, onClose, onSaved }) {
                   className="btn-ghost px-3 disabled:opacity-30"
                   aria-label={`Remove option ${index + 1}`}
                 >
-                  ✕
+                  <CloseIcon className="h-3.5 w-3.5" />
                 </button>
               </div>
             ))}

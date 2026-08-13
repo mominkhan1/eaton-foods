@@ -4,6 +4,7 @@ import { getOrder, statusPosition } from '../lib/orders';
 import { ORDER_TYPE, storeConfig } from '../data/store';
 import { formatPence } from '../lib/money';
 import { formatDateTime } from '../lib/hours';
+import { CheckSealIcon } from '../components/Icons';
 
 /** How often the customer's tracking screen re-reads the order. */
 const POLL_MS = 15000;
@@ -81,7 +82,7 @@ export default function OrderStatus() {
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
       <div className="text-center">
-        <span className="text-5xl" aria-hidden="true">🎉</span>
+        <CheckSealIcon className="mx-auto h-14 w-14 text-leaf-500" />
         <h1 className="mt-3 text-4xl text-ink-950">Order confirmed</h1>
         <p className="mt-2 text-ink-500">
           Reference <span className="font-mono font-semibold text-brand-600">{order.reference}</span>

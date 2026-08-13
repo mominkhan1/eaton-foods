@@ -13,6 +13,7 @@ import {
 } from '../lib/repository';
 import { deleteImage } from '../lib/images';
 import { useAdminAction } from './useAdminAction';
+import { ImageIcon, ChevronUpIcon, ChevronDownIcon } from '../components/Icons';
 import {
   AUTOPLAY_MIN_SECONDS,
   AUTOPLAY_MAX_SECONDS,
@@ -291,7 +292,7 @@ export default function AdminBanners() {
 
       {allBanners.length === 0 ? (
         <div className="card mt-4 grid place-items-center py-16 text-center">
-          <span className="text-4xl" aria-hidden="true">🖼️</span>
+          <ImageIcon className="h-11 w-11 text-brand-500/40" />
           <p className="mt-3 font-semibold text-ink-800">No slides yet</p>
           <p className="mt-1 max-w-sm text-sm text-ink-500">
             Add one to put a headline, a photo and a button at the top of the homepage.
@@ -316,20 +317,20 @@ export default function AdminBanners() {
                     disabled={index === 0 || busy}
                     onClick={() => run(() => moveBanner(slide.id, -1))}
                   >
-                    ▲
+                    <ChevronUpIcon className="h-3 w-3" />
                   </OrderButton>
                   <OrderButton
                     label="Move down"
                     disabled={index === allBanners.length - 1 || busy}
                     onClick={() => run(() => moveBanner(slide.id, 1))}
                   >
-                    ▼
+                    <ChevronDownIcon className="h-3 w-3" />
                   </OrderButton>
                 </span>
 
                 <Thumb
                   imageId={slide.imageId}
-                  emoji="🖼️"
+                  icon={<ImageIcon className="h-6 w-6" />}
                   className="h-16 w-24 shrink-0"
                   rounded="rounded-lg"
                   emojiClass="text-xl"
@@ -635,7 +636,7 @@ function BannerEditor({ draft, existingIds, onClose, onSaved }) {
         <ImageField
           value={form.imageId}
           onChange={(imageId) => set({ imageId })}
-          emoji="🖼️"
+          icon={<ImageIcon className="h-6 w-6" />}
           label="Slide image"
         />
         <p className="-mt-2 text-xs text-ink-500/80">
@@ -672,7 +673,7 @@ function BannerEditor({ draft, existingIds, onClose, onSaved }) {
         <ImageField
           value={form.backgroundImageId}
           onChange={(backgroundImageId) => set({ backgroundImageId })}
-          emoji="🌄"
+          icon={<ImageIcon className="h-6 w-6" />}
           label="Background image"
         />
         <p className="-mt-2 text-xs text-ink-500/80">
@@ -792,7 +793,7 @@ function Preview({ form }) {
 
         <Thumb
           imageId={form.imageId}
-          emoji="🖼️"
+          icon={<ImageIcon className="h-6 w-6" />}
           className="aspect-[4/3] w-full border border-surface-200"
           rounded="rounded-xl"
           emojiClass="text-2xl"

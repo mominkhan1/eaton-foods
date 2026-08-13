@@ -23,6 +23,9 @@ export function useImageUrl(imageId) {
 export default function Thumb({
   imageId,
   emoji,
+  // For placeholders that are ours rather than the shop's — a banner slide has
+  // no emoji of its own, so it passes an icon instead.
+  icon,
   alt = '',
   className = '',
   rounded = 'rounded-xl',
@@ -47,12 +50,14 @@ export default function Thumb({
 
   return (
     <span
-      className={`${className} ${rounded} grid place-items-center bg-surface-0 ${emojiClass}`}
+      className={`${className} ${rounded} grid place-items-center bg-surface-0 ${
+        icon ? 'text-ink-500/50' : emojiClass
+      }`}
       aria-hidden={alt ? undefined : 'true'}
       role={alt ? 'img' : undefined}
       aria-label={alt || undefined}
     >
-      {emoji ?? '🍽️'}
+      {icon ?? emoji ?? '🍽️'}
     </span>
   );
 }

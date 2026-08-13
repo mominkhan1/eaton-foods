@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Thumb, { useImageUrl } from './Thumb';
+import { BurgerIcon } from './Icons';
 import { BrushPatch, Splash, DashedArrow } from './HeroDecor';
 import { useCatalog } from '../context/CatalogContext';
 import { useOrder } from '../context/OrderContext';
@@ -294,7 +295,7 @@ function HeroCutout({ imageId, alt }) {
         className="relative z-10 grid aspect-[6/5] w-full place-items-center text-8xl"
         aria-hidden="true"
       >
-        🍔
+        <BurgerIcon className="h-24 w-24 text-brand-500/30" />
       </span>
     );
   }

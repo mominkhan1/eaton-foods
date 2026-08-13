@@ -11,6 +11,7 @@ import { formatPence } from '../lib/money';
 import { lineUnitPence } from '../lib/pricing';
 import { formatDateTime, formatTime } from '../lib/hours';
 import { placeOrder, rememberOrder } from '../lib/orders';
+import { DrumstickIcon, CardIcon, PhoneIcon } from '../components/Icons';
 
 const CUSTOMER_KEY = 'eaton.customer.v1';
 
@@ -41,7 +42,7 @@ export default function Checkout() {
   if (isEmpty) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-20 text-center">
-        <span className="text-5xl" aria-hidden="true">🍗</span>
+        <DrumstickIcon className="mx-auto h-14 w-14 text-brand-500/40" />
         <h1 className="mt-4 text-3xl text-ink-950">Nothing to check out</h1>
         <p className="mt-2 text-ink-500">Your basket is empty.</p>
         <Link to="/menu" className="btn-primary mt-6">
@@ -237,7 +238,7 @@ export default function Checkout() {
                 onChange={setPayment}
                 label="Credit or debit card"
                 hint="Visa, Mastercard, Amex"
-                icon="💳"
+                icon={<CardIcon className="h-6 w-6 shrink-0 text-brand-600" />}
               />
               <PaymentOption
                 id="gpay"
@@ -245,7 +246,7 @@ export default function Checkout() {
                 onChange={setPayment}
                 label="Google Pay"
                 hint="Pay with your saved card"
-                icon="📱"
+                icon={<PhoneIcon className="h-6 w-6 shrink-0 text-brand-600" />}
               />
             </div>
 
@@ -347,7 +348,7 @@ function PaymentOption({ id, checked, onChange, label, hint, icon }) {
         onChange={() => onChange(id)}
         className="h-4 w-4 accent-brand-500"
       />
-      <span className="text-xl" aria-hidden="true">{icon}</span>
+      {icon}
       <span className="flex-1">
         <span className="block text-sm text-ink-800">{label}</span>
         <span className="block text-xs text-ink-500">{hint}</span>

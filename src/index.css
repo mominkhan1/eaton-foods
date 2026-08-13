@@ -179,8 +179,10 @@
            focus:border-brand-500 focus:outline-none;
   }
 
+  /* inline-flex so a chip can hold a status dot beside its label and have the
+     two sit on the same centre line. A text-only chip is unaffected. */
   .chip {
-    @apply rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider;
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider;
   }
 }
 

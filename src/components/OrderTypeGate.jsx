@@ -4,6 +4,7 @@ import { ORDER_TYPE, orderSetup, storeConfig } from '../data/store';
 import { useOrder } from '../context/OrderContext';
 import { DELIVERY_AREA_MESSAGES } from '../lib/geo';
 import { formatTime } from '../lib/hours';
+import { StorefrontIcon, ScooterIcon } from './Icons';
 
 /**
  * First-run gate: collection or delivery, and for delivery a postcode that
@@ -77,7 +78,7 @@ export default function OrderTypeGate() {
             onClick={chooseCollection}
             className="card group flex items-center gap-4 p-4 text-left hover:border-brand-500"
           >
-            <span className="text-3xl" aria-hidden="true">🏪</span>
+            <StorefrontIcon className="h-8 w-8 shrink-0 text-brand-600" />
             <span className="flex-1">
               <span className="block font-semibold text-ink-950">Collection</span>
               <span className="block text-sm text-ink-500">
@@ -93,7 +94,7 @@ export default function OrderTypeGate() {
               onClick={chooseDelivery}
               className="card group flex items-center gap-4 p-4 text-left hover:border-brand-500"
             >
-              <span className="text-3xl" aria-hidden="true">🛵</span>
+              <ScooterIcon className="h-8 w-8 shrink-0 text-brand-600" />
               <span className="flex-1">
                 <span className="block font-semibold text-ink-950">Delivery</span>
                 <span className="block text-sm text-ink-500">

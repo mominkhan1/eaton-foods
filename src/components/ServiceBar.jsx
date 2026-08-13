@@ -4,6 +4,7 @@ import { ORDER_TYPE, orderSetup } from '../data/store';
 import { formatTime, formatDateTime } from '../lib/hours';
 import AddressModal from './AddressModal';
 import TimingModal from './TimingModal';
+import { StorefrontIcon, ScooterIcon, PinIcon, ClockIcon } from './Icons';
 
 /**
  * The persistent "how and when" strip.
@@ -80,14 +81,15 @@ export default function ServiceBar() {
               >
                 {/* "Collect" on phones — both are ordinary takeaway wording,
                     and the shorter one buys the room to stay on one line. */}
-                <span aria-hidden="true">🏪</span> Collect<span className="hidden sm:inline">ion</span>
+                <StorefrontIcon className="h-4 w-4" /> Collect
+                <span className="hidden sm:inline">ion</span>
               </SegmentButton>
               {orderSetup.isDeliveryOn && (
                 <SegmentButton
                   active={orderType === ORDER_TYPE.DELIVERY}
                   onClick={() => switchTo(ORDER_TYPE.DELIVERY)}
                 >
-                  <span aria-hidden="true">🛵</span> Delivery
+                  <ScooterIcon className="h-4 w-4" /> Delivery
                 </SegmentButton>
               )}
             </div>
@@ -96,9 +98,9 @@ export default function ServiceBar() {
               <button
                 type="button"
                 onClick={() => setAddressOpen(true)}
-                className="max-w-[9rem] shrink-0 truncate rounded-full border border-surface-300 px-3 py-2 text-xs text-ink-500 hover:border-brand-500 hover:text-ink-800 sm:max-w-[16rem] sm:px-3.5"
+                className="inline-flex max-w-[9rem] shrink-0 items-center gap-1.5 truncate rounded-full border border-surface-300 px-3 py-2 text-xs text-ink-500 hover:border-brand-500 hover:text-ink-800 sm:max-w-[16rem] sm:px-3.5"
               >
-                <span aria-hidden="true">📍</span>{' '}
+                <PinIcon className="h-3.5 w-3.5 shrink-0 text-brand-600" />
                 {deliveryAddress ? deliveryAddress.postcode : 'Address'}
                 <span className="hidden sm:inline">
                   {deliveryAddress ? ` · ${deliveryAddress.line1}` : ''}
@@ -109,9 +111,9 @@ export default function ServiceBar() {
             <button
               type="button"
               onClick={() => setTimingOpen(true)}
-              className="shrink-0 whitespace-nowrap rounded-full border border-surface-300 px-3 py-2 text-xs text-ink-500 hover:border-brand-500 hover:text-ink-800 sm:px-3.5"
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-surface-300 px-3 py-2 text-xs text-ink-500 hover:border-brand-500 hover:text-ink-800 sm:px-3.5"
             >
-              <span aria-hidden="true">🕒</span>{' '}
+              <ClockIcon className="h-3.5 w-3.5 shrink-0 text-brand-600" />
               {/* Same control, less wording on a narrow screen. */}
               <span className="sm:hidden">{timingLabelShort}</span>
               <span className="hidden sm:inline">{timingLabel}</span>
@@ -146,7 +148,7 @@ function SegmentButton({ active, onClick, children }) {
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition-colors sm:px-4 ${
+      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition-colors sm:px-4 ${
         active ? 'bg-brand-600 text-white' : 'text-ink-500 hover:text-ink-800'
       }`}
     >
