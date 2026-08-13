@@ -128,7 +128,7 @@ export const api = {
    */
   getBootstrap: (options) => get('/bootstrap', options),
 
-  /** Store config, order setup, promo and the Stripe publishable key. */
+  /** Store config, order setup, promo and the PayPal client id. */
   getConfig: (options) => get('/config', options),
   getCatalog: (options) => get('/catalog', options),
   getHours: (options) => get('/hours', options),
@@ -138,9 +138,19 @@ export const api = {
   placeOrder: (order, options) => post('/orders', order, options),
   trackOrder: (reference, options) => get(`/orders/${encodeURIComponent(reference)}`, options),
 
-  /** Returns the Stripe client secret for this order's payment. */
-  createPaymentIntent: (reference, options) =>
-    post(`/orders/${encodeURIComponent(reference)}/payment-intent`, undefined, options),
+  /**
+   * Start a PayPal payment for an order, returning the PayPal order id for
+   * the SDK to open. The amount comes from the stored order, never from here.
+   */
+  createPaypalOrder: (reference, options) =>
+    post(`/orders/${encodeURIComponent(reference)}/paypal-order`, undefined, options),
+
+  /**
+   * Take the money. The server checks the captured amount and currency
+   * against the order before anything is marked paid.
+   */
+  capturePaypalOrder: (reference, paypalOrderId, options) =>
+    post(`/orders/${encodeURIComponent(reference)}/paypal-capture`, { paypalOrderId }, options),
 
   // ── Auth ─────────────────────────────────────────────────────────────────
 

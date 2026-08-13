@@ -391,7 +391,7 @@ function create_order(): array
                         pence_to_decimal($totals['delivery']),
                         pence_to_decimal($totals['surcharge']),
                         pence_to_decimal($totals['total']),
-                        'pending', 'stripe', client_ip_binary(),
+                        'pending', null, client_ip_binary(),
                     ]
                 );
                 $orderId = (int) $pdo->lastInsertId();
@@ -443,14 +443,19 @@ function create_order(): array
     });
 
     /*
-     * Emails go out AFTER the transaction commits.
+     * The kitchen is NOT told yet.
      *
-     * Sending inside it would hold row locks open for however long the mail
-     * server takes, and a mail failure would roll back an order the customer
-     * has already been told about. notify_order_placed() swallows its own
-     * errors for the same reason: a full mailbox must not lose an order.
+     * An order exists at this point but has not been paid for. Printing a
+     * ticket here would put a docket on the pass for every abandoned
+     * checkout, and the shop would cook food nobody bought. The notification
+     * is sent from mark_order_paid_by_paypal(), once the money has actually
+     * been captured — see routes/paypal_order.php.
+     *
+     * Emails go out after the transaction commits either way: sending inside
+     * it would hold row locks open for however long the mail server takes,
+     * and notify_order_placed() swallows its own errors so a full mailbox
+     * cannot lose an order.
      */
-    notify_order_placed($placed);
 
     return $placed;
 }

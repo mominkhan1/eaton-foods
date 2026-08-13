@@ -125,7 +125,7 @@ $GLOBALS['eaton_config'] = eaton_load_config();
 
 function config(string $key, $default = null)
 {
-    // Dot path: config('db.host'), config('stripe.secret_key').
+    // Dot path: config('db.host'), config('paypal.secret').
     $value = $GLOBALS['eaton_config'];
     foreach (explode('.', $key) as $segment) {
         if (!is_array($value) || !array_key_exists($segment, $value)) {

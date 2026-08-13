@@ -30,7 +30,7 @@ announce the site as live until it passes.
 The config file sits **above** `public_html` on purpose. If Apache ever stops
 executing PHP — a bad `.htaccess`, a failed upgrade — every `.php` file under
 the web root gets served as plain text. Anything inside `public_html` would
-hand your database password and Stripe secret key to whoever asked.
+hand your database password and PayPal secret to whoever asked.
 
 ---
 
@@ -143,7 +143,7 @@ RewriteRule ^ - [L]
 # Everything else is the React app.
 RewriteRule ^ index.html [L]
 
-# Force HTTPS. Stripe refuses to run on plain http, and the session cookie is
+# Force HTTPS. PayPal refuses to run on plain http, and the session cookie is
 # marked Secure, so the admin panel cannot log in without this.
 RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
@@ -171,7 +171,7 @@ cPanel → **SSL/TLS Status** → tick your domain → **Run AutoSSL**. Namechea
 issues a free Let's Encrypt certificate; it takes a few minutes.
 
 Confirm `https://yourdomain.co.uk` loads with a padlock before continuing.
-Stripe will not work without it.
+PayPal will not work without it.
 
 ## 7. Create the owner account
 
@@ -201,63 +201,145 @@ the row by hand in phpMyAdmin → `users` → Insert:
 
 Delete `create-owner.php` from the server afterwards either way.
 
-## 8. Stripe
+## 8. PayPal
 
-### Keys
+Payment runs through **PayPal Standard Checkout**. Customers without a PayPal
+account pay by card on PayPal's own page — no card details ever touch this
+site, which is what keeps the shop out of PCI scope.
 
-dashboard.stripe.com → **Developers → API keys**. Start in **test mode** (the
-toggle top-right). Copy both keys into `eaton-config.php`:
+The whole section is done twice: once in **sandbox** to prove it works, once in
+**live** to take real money. Do not skip the sandbox pass. Every credential
+below exists separately in each environment and they are not interchangeable.
+
+### 8.1 Create the app (sandbox first)
+
+1. Sign in at **developer.paypal.com** with the PayPal account the shop's money
+   should land in.
+2. **Apps & Credentials**. Note the **Sandbox / Live** toggle at the top —
+   leave it on **Sandbox** for now.
+3. **Create App** → name it `Eat On` → type **Merchant** → Create.
+4. Copy the **Client ID** and, under Secret, **Generate/Show** and copy that.
+
+Put them in `eaton-config.php` (the file above `public_html`, section 3):
 
 ```php
-'stripe' => [
-    'publishable_key' => 'pk_test_...',
-    'secret_key'      => 'sk_test_...',
-    'webhook_secret'  => '',        // filled in next
-    'currency'        => 'gbp',
+'paypal' => [
+    'mode'       => 'sandbox',
+    'client_id'  => 'AX...................',
+    'secret'     => 'EL...................',
+    'webhook_id' => '',            // filled in at 8.2
+    'currency'   => 'GBP',
 ],
 ```
 
-### Webhook
+> `mode` is what decides which PayPal you talk to. Sandbox credentials against
+> live, or the reverse, fail with `Client Authentication failed` and nothing
+> more useful — if you see that, this is why.
 
-This is the part that actually marks orders paid. Without it, customers are
-charged and the kitchen never sees the order.
+### 8.2 Add the webhook
 
-**Developers → Webhooks → Add endpoint**:
+The webhook is the safety net. The payment is normally confirmed by the
+browser as it happens; the webhook is what saves an order when the customer
+closes the tab at the wrong moment, or when PayPal holds a payment for review
+and releases it minutes later.
 
-- **URL**: `https://yourdomain.co.uk/api/stripe/webhook`
-- **Events**: `payment_intent.succeeded`, `payment_intent.payment_failed`,
-  `charge.refunded`
+Still in your app, scroll to **Webhooks → Add Webhook**:
 
-Reveal the **Signing secret** (`whsec_...`) and put it in `webhook_secret`.
+- **URL**: `https://yourdomain.co.uk/api/paypal/webhook`
+- **Events** — tick exactly these four:
+  - `PAYMENT.CAPTURE.COMPLETED`
+  - `PAYMENT.CAPTURE.DENIED`
+  - `PAYMENT.CAPTURE.REFUNDED`
+  - `PAYMENT.CAPTURE.REVERSED`
 
-The signature check is what stops anyone who finds that URL from POSTing
-"payment succeeded" and getting free food. If the secret is wrong the endpoint
-returns 400 and Stripe's dashboard shows the failures — check there first if
-payments are not landing.
+Save, then copy the **Webhook ID** it shows (`WH-...`) into `webhook_id`.
 
-### Test the whole flow
+Without that id the signature cannot be checked and **every webhook is
+rejected**. That is the safe direction to fail — it means nobody can POST
+"payment completed" to that URL and get free food — but it also means a
+payment settled out-of-band never reaches the kitchen. Do not leave it blank.
 
-With test keys still in place, place a real order on the site using Stripe's
-test card:
+### 8.3 Run the database migration
+
+Payments changed the orders table. In **phpMyAdmin → your database → Import**,
+run:
 
 ```
-Card    4242 4242 4242 4242
-Expiry  any future date
-CVC     any 3 digits
-Postcode any
+server/migrations/002-paypal-payments.sql
 ```
 
-Then verify, in order:
+It is safe to run once and unnecessary on a fresh install. It also converts
+orders placed before this change to `unpaid`, so they stay on the Orders
+screen rather than vanishing.
 
-1. The order appears in the admin panel under **Orders**.
-2. Its payment status reads **paid** (this proves the webhook works).
-3. Stripe → Payments shows the charge.
-4. Advancing the status in the admin panel updates the customer's tracking page.
+### 8.4 Take a sandbox payment
 
-Only once all four pass, switch to live keys: flip Stripe out of test mode,
-copy the `pk_live_`/`sk_live_` keys, **create a second webhook endpoint** for
-live mode (test and live webhooks are separate — this is the single most
-commonly missed step), and update `webhook_secret` to the live one.
+You need a sandbox buyer to pay with: **developer.paypal.com → Testing Tools →
+Sandbox Accounts**. There is a *personal* account there already — click
+**View/Edit** to get its email and system-generated password.
+
+Now place an order on the real site, and at the PayPal window sign in as that
+sandbox buyer. Then check, in order:
+
+1. **The order appears in the admin panel under Orders.** If it does not, the
+   payment did not complete — the kitchen deliberately never sees an unpaid
+   order.
+2. **Its payment shows as paid.**
+3. **developer.paypal.com → Sandbox → Transactions** shows the payment.
+4. **Advancing the status in the admin panel** updates the customer's tracking
+   page.
+5. **The shop received the new-order email.**
+
+If 1 and 2 fail but 3 shows the money, the webhook is the problem — check its
+delivery log in the PayPal dashboard, and `server/logs/eaton-error.log`.
+
+### 8.5 Go live
+
+Only once all five pass:
+
+1. developer.paypal.com → flip the toggle to **Live**.
+2. **Apps & Credentials → Create App** again — a live app is a separate app
+   with its own client ID and secret. Copy both.
+3. **Add the webhook again, under the live app**, with the same URL and the
+   same four events. Copy the new live **Webhook ID**.
+
+   > Sandbox and live webhooks are entirely separate. Forgetting the live one
+   > is the single most commonly missed step, and it fails silently: payments
+   > succeed and orders sit unpaid.
+
+4. Update `eaton-config.php` — all four values change:
+
+```php
+'paypal' => [
+    'mode'       => 'live',
+    'client_id'  => 'AX... (live)',
+    'secret'     => 'EL... (live)',
+    'webhook_id' => 'WH-... (live)',
+    'currency'   => 'GBP',
+],
+```
+
+5. Confirm the PayPal business account is fully verified and can accept
+   payments — a new account is sometimes limited until bank details are
+   confirmed, and payments will fail until then.
+
+6. **Place one real order with your own card, for the cheapest item on the
+   menu.** Watch it land in the admin panel, then refund it from
+   paypal.com → Activity. The refund should flip the order to `refunded`
+   within a minute, which proves the live webhook is wired.
+
+### What the customer sees if something is wrong
+
+- **PayPal not configured** — the checkout says online payment is unavailable
+  and shows the shop's phone number, rather than a button that fails.
+- **An ad blocker eats the SDK** — the payment box explains that and suggests
+  disabling it. This is common enough to be worth knowing about.
+- **Payment declined** — the basket is kept so they can try another method.
+
+### Refunds
+
+Refund from **paypal.com → Activity**, not from this site. The webhook picks it
+up and marks the order `refunded`, which takes it out of the revenue figures.
 
 ---
 
@@ -345,7 +427,8 @@ regardless.
 - [ ] `create-owner.php` deleted from the server
 - [ ] `'env' => 'production'` in the config
 - [ ] Staff accounts created with the right roles
-- [ ] Live Stripe keys **and** a live-mode webhook configured
+- [ ] Live PayPal credentials **and** a live-mode webhook configured
+- [ ] One real payment taken and refunded end to end
 
 ---
 
@@ -386,7 +469,7 @@ Manager until you enable **Settings → Show Hidden Files**.
 `Secure`, so it needs HTTPS. Check `site_url` in the config starts with
 `https://` and matches the domain exactly.
 
-**Payments taken but orders stay unpaid** — the webhook. Check Stripe →
+**Payments taken but orders stay unpaid** — the webhook. Check PayPal →
 Webhooks → your endpoint → recent deliveries for the error, and confirm you
 used the signing secret from the *same mode* (test vs live) as your API keys.
 

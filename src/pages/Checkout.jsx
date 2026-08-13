@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { useOrder } from '../context/OrderContext';
@@ -11,7 +11,9 @@ import { formatPence } from '../lib/money';
 import { lineUnitPence } from '../lib/pricing';
 import { formatDateTime, formatTime } from '../lib/hours';
 import { placeOrder, rememberOrder } from '../lib/orders';
-import { DrumstickIcon, CardIcon, PhoneIcon } from '../components/Icons';
+import { api } from '../lib/api';
+import PayPalButton from '../components/PayPalButton';
+import { DrumstickIcon, CardIcon } from '../components/Icons';
 
 const CUSTOMER_KEY = 'eaton.customer.v1';
 
@@ -32,12 +34,34 @@ export default function Checkout() {
   const [name, setName] = useState(saved.name ?? '');
   const [phone, setPhone] = useState(saved.phone ?? '');
   const [email, setEmail] = useState(saved.email ?? '');
-  const [payment, setPayment] = useState('card');
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
 
   const [addressOpen, setAddressOpen] = useState(false);
   const [timingOpen, setTimingOpen] = useState(false);
+
+  // The PayPal client id, and whether payment is configured at all.
+  const [paypal, setPaypal] = useState(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    api
+      .getConfig({ signal: controller.signal })
+      .then((config) => setPaypal(config.paypal ?? { configured: false }))
+      .catch(() => setPaypal({ configured: false }));
+    return () => controller.abort();
+  }, []);
+
+  /*
+   * The order this payment is for.
+   *
+   * Created on the first payment attempt and reused on a retry, so a customer
+   * who cancels the PayPal window and tries again does not leave a trail of
+   * abandoned orders. Keyed by a signature of everything that affects the
+   * price: if the basket changed underneath, the stored order is wrong and a
+   * fresh one is placed.
+   */
+  const placed = useRef(null);
 
   if (isEmpty) {
     return (
@@ -71,51 +95,102 @@ export default function Checkout() {
     return Object.keys(next).length === 0;
   }
 
-  async function onSubmit(event) {
-    event.preventDefault();
-    if (!validate() || !canCheckout || submitting) return;
-
-    setSubmitting(true);
-    setErrors({});
-
-    const customer = { name: name.trim(), phone: phone.trim(), email: email.trim() };
+  function rememberCustomer(customer) {
     try {
       localStorage.setItem(CUSTOMER_KEY, JSON.stringify(customer));
     } catch {
-      // Not worth blocking the order over.
+      // Private browsing. Not worth blocking the order over.
+    }
+  }
+
+  /** Everything that affects what this order costs. */
+  function orderPayload() {
+    return {
+      lines,
+      orderType,
+      timing,
+      address: deliveryAddress,
+      customer: { name: name.trim(), phone: phone.trim(), email: email.trim() },
+      promoCode,
+    };
+  }
+
+  /**
+   * The order must exist server-side before PayPal can be told what to charge
+   * — the amount comes from the stored order, not from this page.
+   */
+  async function ensureOrder() {
+    const payload = orderPayload();
+    const signature = JSON.stringify(payload);
+
+    if (placed.current?.signature === signature) {
+      return placed.current.reference;
     }
 
-    let order;
+    rememberCustomer(payload.customer);
+
+    const order = await placeOrder(payload);
+    placed.current = { signature, reference: order.reference };
+    return order.reference;
+  }
+
+  /** PayPal is opening: last chance to stop it. */
+  function onBeforePay() {
+    if (!validate() || !canCheckout) {
+      // The invalid field is up the page, above the fold on desktop but not
+      // on a phone.
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return false;
+    }
+    setErrors({});
+    return true;
+  }
+
+  async function onCreatePaypalOrder() {
+    setSubmitting(true);
     try {
-      order = await placeOrder({
-        lines,
-        orderType,
-        timing,
-        address: deliveryAddress,
-        customer,
-        promoCode,
-      });
+      const reference = await ensureOrder();
+      const { paypalOrderId } = await api.createPaypalOrder(reference);
+      return paypalOrderId;
     } catch (error) {
       setSubmitting(false);
+      /*
+       * The server re-prices and re-checks everything the browser checked, so
+       * a refusal here usually means the shop changed something while the
+       * basket sat open — an item came off the menu, or a price moved. The
+       * basket is deliberately left intact so the customer can fix it rather
+       * than start again.
+       */
+      setErrors({
+        submit: error?.message ?? 'We could not start the payment. Please try again.',
+      });
+      throw error;
+    }
+  }
 
-      // The server re-checks everything the browser checked, so a refusal here
-      // usually means the shop changed something while the basket sat open —
-      // an item came off the menu, or a price moved. The basket is deliberately
-      // left intact so the customer can fix it rather than start again.
+  async function onPaymentApproved(paypalOrderId) {
+    const reference = placed.current?.reference;
+    if (!reference) return;
+
+    try {
+      await api.capturePaypalOrder(reference, paypalOrderId);
+    } catch (error) {
+      setSubmitting(false);
       setErrors({
         submit:
-          error?.code === 'outside_delivery_area'
-            ? error.message
-            : (error?.message ?? 'We could not place that order. Please try again.'),
+          error?.message ??
+          'We could not confirm that payment. Do not pay again — call the shop and quote ' +
+            reference +
+            '.',
       });
       return;
     }
 
-    rememberOrder(order);
+    rememberOrder({ reference, placedAt: new Date().toISOString(), totals });
     clear();
     // `replace`, so Back does not land on a checkout for a basket that has
     // already been paid for and cleared.
-    navigate(`/thank-you/${order.reference}`, { replace: true });
+    navigate(`/thank-you/${reference}`, { replace: true });
   }
 
   const whenLabel =
@@ -129,7 +204,15 @@ export default function Checkout() {
     <div className="mx-auto max-w-6xl px-4 py-8">
       <h1 className="text-4xl text-ink-950">Checkout</h1>
 
-      <form onSubmit={onSubmit} className="mt-6 grid gap-6 lg:grid-cols-[1fr_22rem] lg:items-start">
+      {/* Payment is what places the order, so there is no submit button.
+          Enter in a field validates rather than doing nothing silently. */}
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          validate();
+        }}
+        className="mt-6 grid gap-6 lg:grid-cols-[1fr_22rem] lg:items-start"
+      >
         <div className="grid gap-4">
           <section className="card p-5">
             <h2 className="text-xl text-ink-950">Your details</h2>
@@ -228,33 +311,22 @@ export default function Checkout() {
           <section className="card p-5">
             <h2 className="text-xl text-ink-950">Payment</h2>
             <p className="mt-1 text-sm text-ink-500">
-              {orderSetup.isCashPaymentAccepted
-                ? 'Card or cash.'
-                : 'Card payment only — we no longer take cash.'}
+              Paid securely through PayPal. You do not need a PayPal account —
+              choose <strong className="text-ink-800">Debit or Credit Card</strong> in the
+              window that opens.
             </p>
 
-            <div className="mt-4 grid gap-2">
-              <PaymentOption
-                id="card"
-                checked={payment === 'card'}
-                onChange={setPayment}
-                label="Credit or debit card"
-                hint="Visa, Mastercard, Amex"
-                icon={<CardIcon className="h-6 w-6 shrink-0 text-brand-600" />}
-              />
-              <PaymentOption
-                id="gpay"
-                checked={payment === 'gpay'}
-                onChange={setPayment}
-                label="Google Pay"
-                hint="Pay with your saved card"
-                icon={<PhoneIcon className="h-6 w-6 shrink-0 text-brand-600" />}
-              />
+            <div className="mt-4 flex items-start gap-3 rounded-xl border border-surface-300 px-4 py-3">
+              <CardIcon className="h-6 w-6 shrink-0 text-brand-600" />
+              <p className="text-sm text-ink-500">
+                Your card details are entered on PayPal's own page and never reach this site.
+                We are told only that the payment succeeded.
+              </p>
             </div>
 
             <p className="mt-4 rounded-xl bg-surface-0 px-4 py-3 text-xs text-ink-500">
-              Card capture is not wired up yet — the order reaches the kitchen and you can track
-              it, but payment is settled in person for now.
+              Nothing is charged until you approve it, and the kitchen only starts cooking
+              once the payment clears.
             </p>
           </section>
         </div>
@@ -306,14 +378,58 @@ export default function Checkout() {
             </p>
           )}
 
-          <button
-            type="submit"
-            disabled={!canCheckout || submitting}
-            className="btn-primary mt-4 w-full justify-between"
-          >
-            <span>{submitting ? 'Placing order…' : 'Place order'}</span>
-            <span className="tabular-nums">{formatPence(totals.total)}</span>
-          </button>
+          <div className="mt-4 flex items-center justify-between border-t border-surface-200 pt-4">
+            <span className="font-display text-xl tracking-wide text-ink-950">To pay</span>
+            <span className="font-display text-xl tabular-nums text-brand-600">
+              {formatPence(totals.total)}
+            </span>
+          </div>
+
+          <div className="mt-3">
+            {paypal === null ? (
+              <p className="py-3 text-center text-sm text-ink-500">Loading payment options…</p>
+            ) : paypal.configured ? (
+              /* Remounted if the total changes, so the button can never be
+                 holding a PayPal order for a basket that has since been
+                 edited in the drawer. */
+              <PayPalButton
+                key={totals.total}
+                clientId={paypal.clientId}
+                currency={paypal.currency}
+                onBeforePay={onBeforePay}
+                createOrder={onCreatePaypalOrder}
+                onApprove={onPaymentApproved}
+                onCancel={() => setSubmitting(false)}
+                onError={() => {
+                  setSubmitting(false);
+                  setErrors({
+                    submit: 'The payment could not be completed. Nothing has been charged.',
+                  });
+                }}
+              />
+            ) : (
+              <p className="rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">
+                Online payment is not set up yet, so orders cannot be placed here. Please call
+                the shop on{' '}
+                <a href={`tel:${storeConfig.phone}`} className="underline">
+                  {storeConfig.phoneDisplay}
+                </a>
+                .
+              </p>
+            )}
+          </div>
+
+          {submitting && (
+            <p className="mt-3 text-center text-xs text-ink-500" role="status">
+              Talking to PayPal — do not close this page.
+            </p>
+          )}
+
+          {!canCheckout && (
+            <p className="mt-3 text-center text-xs text-ink-500">
+              Fix the items above before paying.
+            </p>
+          )}
         </aside>
       </form>
 
@@ -332,29 +448,6 @@ function Field({ label, error, optional, children }) {
       </span>
       {children}
       {error && <span className="mt-1 block text-xs text-chilli-500">{error}</span>}
-    </label>
-  );
-}
-
-function PaymentOption({ id, checked, onChange, label, hint, icon }) {
-  return (
-    <label
-      className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 ${
-        checked ? 'border-brand-500 bg-brand-500/8' : 'border-surface-300'
-      }`}
-    >
-      <input
-        type="radio"
-        name="payment"
-        checked={checked}
-        onChange={() => onChange(id)}
-        className="h-4 w-4 accent-brand-500"
-      />
-      {icon}
-      <span className="flex-1">
-        <span className="block text-sm text-ink-800">{label}</span>
-        <span className="block text-xs text-ink-500">{hint}</span>
-      </span>
     </label>
   );
 }

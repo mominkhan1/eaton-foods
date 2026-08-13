@@ -43,11 +43,18 @@ patterns that make modals reset unpredictably.
    initialisers do the resetting — no reset effect to get wrong.
 5. **Basket drawer** — line editing, promo code, free-delivery progress,
    minimum-order enforcement, collection-only conflict detection.
-6. **Checkout** — customer details, address/timing recap, card or Google Pay.
+6. **Checkout** — customer details, address/timing recap, and payment.
 7. **Thank you** — `/thank-you/:reference`, reached once, straight from
    checkout. The reference sits on a tear-off docket, with when it will be
    ready, what happens next, and where it is going.
-8. **Tracking** — `/order/:reference`, the durable link. It is what the
+8. **Payment** — PayPal Standard Checkout. The amount is attached to the
+   PayPal order server-side from the stored total, and the captured figure is
+   checked against it before anything is marked paid. Customers without a
+   PayPal account pay by card on PayPal's own page, so no card details reach
+   this site. **The kitchen is only told about an order once the payment
+   clears** — otherwise every abandoned checkout would put a ticket on the
+   pass. Setup and go-live: [server/DEPLOYMENT.md](server/DEPLOYMENT.md) §8.
+9. **Tracking** — `/order/:reference`, the durable link. It is what the
    confirmation email points at and what **Track order** resolves to, so
    opening it days later gives the status rather than the celebration. The
    timeline advances when the kitchen advances it, not on a clock.
@@ -273,14 +280,6 @@ Two things the printed board does not settle:
 
 These are deliberate stubs, each isolated to one function:
 
-- **Card capture.** Orders reach the kitchen and can be tracked, but nothing
-  takes the money yet: an order is written with `payment_status = 'pending'`.
-  The Stripe payment-intent endpoint and webhook exist
-  ([server/api/routes/](server/api/routes/)) and the checkout does not call
-  them. Note that **reports count only paid orders**, so until this is
-  connected the revenue figures stay at zero while orders accumulate. You will
-  need your own Stripe merchant account — do not reuse any keys from the
-  reference site.
 - **Geocoding.** `geocodePostcodeStub()` derives a stable pseudo-location near
   the shop so the radius check has something to work against in development.
   Replace with a real geocoder. The delivery area is currently decided by

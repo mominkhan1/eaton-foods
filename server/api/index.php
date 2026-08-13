@@ -334,18 +334,23 @@ route('POST', '/auth/change-password', function (): void {
     change_own_password();
 });
 
-// ── Stripe ─────────────────────────────────────────────────────────────────
+// ── PayPal ─────────────────────────────────────────────────────────────────
 
-// Must come before the same-origin guard runs — Stripe posts from its own
-// servers, and is authenticated by signature instead.
-route('POST', '/stripe/webhook', function (): void {
-    require __DIR__ . '/routes/stripe_webhook.php';
-    handle_stripe_webhook();
+// Must come before the same-origin guard runs — PayPal posts from its own
+// servers, and is authenticated by asking PayPal to verify the signature.
+route('POST', '/paypal/webhook', function (): void {
+    require __DIR__ . '/routes/paypal_webhook.php';
+    handle_paypal_webhook();
 });
 
-route('POST', '/orders/{reference}/payment-intent', function (array $params): void {
-    require __DIR__ . '/routes/stripe_intent.php';
-    create_payment_intent($params['reference']);
+route('POST', '/orders/{reference}/paypal-order', function (array $params): void {
+    require __DIR__ . '/routes/paypal_order.php';
+    create_paypal_order($params['reference']);
+});
+
+route('POST', '/orders/{reference}/paypal-capture', function (array $params): void {
+    require __DIR__ . '/routes/paypal_order.php';
+    capture_paypal_order($params['reference']);
 });
 
 // ── Run ────────────────────────────────────────────────────────────────────
@@ -358,7 +363,7 @@ $path = '/' . trim(preg_replace('#^.*?/api#', '', $path) ?? '', '/');
 
 // The webhook authenticates by signature, so the origin check would only
 // reject it. Everything else that changes state must be same-origin.
-if ($path !== '/stripe/webhook') {
+if ($path !== '/paypal/webhook') {
     assert_same_origin();
 }
 

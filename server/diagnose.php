@@ -82,7 +82,7 @@ if (str_ends_with($siteUrl, '/')) {
 }
 
 // Placeholders left in place are a common half-finished deploy.
-foreach (['db' => 'password', 'stripe' => 'secret_key'] as $section => $key) {
+foreach (['db' => 'password', 'paypal' => 'secret'] as $section => $key) {
     $value = (string) ($config[$section][$key] ?? '');
     if (str_contains($value, 'CHANGE_ME')) {
         line("config.{$section}.{$key}", 'WARN', 'still a CHANGE_ME placeholder');

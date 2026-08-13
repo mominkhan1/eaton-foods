@@ -21,7 +21,7 @@ Three things are deliberately never touched by a deploy:
 
 | Left alone | Why |
 |---|---|
-| `eaton-config.php` | Lives above `public_html`, holds your database and Stripe credentials, and is not in git. A deploy must never overwrite it. |
+| `eaton-config.php` | Lives above `public_html`, holds your database and PayPal credentials, and is not in git. A deploy must never overwrite it. |
 | `public_html/uploads/` | The shop's menu photos. Wiping these each release would blank every image. |
 | The database | Schema changes get applied deliberately, not as a side effect of a push. |
 

@@ -27,8 +27,8 @@ return [
     ],
 
     // ── Site ───────────────────────────────────────────────────────────────
-    // Used to build absolute URLs (image links, Stripe return URLs).
-    // No trailing slash. Must be https in production or Stripe will refuse.
+    // Used to build absolute URLs (image links, PayPal return URLs).
+    // No trailing slash. Must be https in production or PayPal will refuse.
     'site_url' => 'https://eatonfoods.co.uk',
 
     // Absolute path to the uploads directory, and the public URL that serves
@@ -44,21 +44,29 @@ return [
         'lifetime' => 28800,
     ],
 
-    // ── Stripe ─────────────────────────────────────────────────────────────
-    // From dashboard.stripe.com → Developers → API keys.
-    // The publishable key is exposed to the browser (that is what it is for).
-    // The secret key must never leave the server.
+    // ── PayPal ─────────────────────────────────────────────────────────────
+    // From developer.paypal.com → Apps & Credentials.
     //
-    // Use the test keys (pk_test_… / sk_test_…) until you have placed a real
-    // test order end to end.
-    'stripe' => [
-        'publishable_key' => 'pk_test_CHANGE_ME',
-        'secret_key'      => 'sk_test_CHANGE_ME',
-        // Created when you add the webhook endpoint in the Stripe dashboard.
-        // Without it, webhook signature verification cannot run and payments
-        // will never be marked paid.
-        'webhook_secret'  => 'whsec_CHANGE_ME',
-        'currency'        => 'gbp',
+    // That page has a Sandbox tab and a Live tab, each with its OWN client id
+    // and secret. They are not interchangeable, and using one against the
+    // other is the single commonest setup error — the API answers
+    // "Client Authentication failed" and nothing else.
+    //
+    // 'mode' picks which PayPal you talk to. Leave it on 'sandbox' until you
+    // have taken a test payment end to end, then switch it and paste the live
+    // credentials in. See DEPLOYMENT.md section 8.
+    'paypal' => [
+        'mode'       => 'sandbox',          // 'sandbox' | 'live'
+        'client_id'  => 'CHANGE_ME',
+        'secret'     => 'CHANGE_ME',
+        // From the webhook you create in the same dashboard, pointing at
+        // https://yourdomain/api/paypal/webhook. Without it the signature
+        // cannot be verified and every webhook is rejected — which is the
+        // safe failure, but it means a payment settled out-of-band never
+        // reaches the kitchen.
+        'webhook_id' => 'CHANGE_ME',
+        // Must match the currency the shop prices in.
+        'currency'   => 'GBP',
     ],
 
     // ── Email ──────────────────────────────────────────────────────────────

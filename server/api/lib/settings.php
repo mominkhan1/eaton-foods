@@ -8,6 +8,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/paypal.php';
+
 // ── Generic key/value ──────────────────────────────────────────────────────
 
 function get_setting(string $key, array $default = []): array
@@ -142,9 +144,9 @@ function get_promo(): array
 /**
  * Everything the front end needs before it can render anything.
  *
- * The Stripe *publishable* key is included deliberately — it is designed to be
- * public and the checkout cannot initialise without it. The secret key is
- * never exposed here.
+ * The PayPal *client id* is included deliberately — the SDK needs it in the
+ * page and it can only start a payment, never move money. The secret is never
+ * exposed here.
  */
 function public_config(): array
 {
@@ -152,9 +154,14 @@ function public_config(): array
         'store'      => store_config(),
         'orderSetup' => order_setup(),
         'promo'      => get_promo(),
-        'stripe'     => [
-            'publishableKey' => config('stripe.publishable_key'),
-            'currency'       => config('stripe.currency', 'gbp'),
+        // The client id is public by design — the SDK needs it in the page,
+        // and it can only start a payment, never move money. The secret stays
+        // on the server.
+        'paypal'     => [
+            'clientId'   => paypal_is_configured() ? config('paypal.client_id') : null,
+            'currency'   => paypal_currency(),
+            'mode'       => paypal_is_live() ? 'live' : 'sandbox',
+            'configured' => paypal_is_configured(),
         ],
         'uploadsUrl' => config('uploads_url', '/uploads'),
     ];

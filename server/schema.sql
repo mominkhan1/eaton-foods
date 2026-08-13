@@ -273,11 +273,18 @@ CREATE TABLE orders (
   surcharge         DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   total             DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 
-  -- Payment. 'unpaid' covers cash-on-collection if that is ever re-enabled.
-  payment_status    ENUM('unpaid','pending','paid','failed','refunded')
+  -- Payment.
+  --   unpaid    cash on collection, if that is ever re-enabled
+  --   pending   created, customer has not started paying
+  --   awaiting  customer is in the gateway's window
+  --   paid      money captured and verified against this order's total
+  -- Only 'paid' and 'unpaid' reach the kitchen's working list.
+  payment_status    ENUM('unpaid','pending','awaiting','paid','failed','refunded')
                     NOT NULL DEFAULT 'pending',
-  payment_method    VARCHAR(40)   NULL,       -- 'stripe' | 'cash'
-  stripe_intent_id  VARCHAR(255)  NULL,
+  payment_method    VARCHAR(40)   NULL,       -- 'paypal' | 'cash'
+  -- Gateway-neutral: a PayPal capture id today. Naming a provider here is why
+  -- changing gateway used to mean changing the schema.
+  payment_ref       VARCHAR(255)  NULL,
   paid_at           DATETIME      NULL,
 
   created_ip        VARBINARY(16) NULL,       -- INET6_ATON, for abuse triage
@@ -286,7 +293,8 @@ CREATE TABLE orders (
 
   PRIMARY KEY (id),
   UNIQUE KEY uq_orders_reference (reference),
-  UNIQUE KEY uq_orders_intent (stripe_intent_id),
+  -- A capture must never be credited to two orders.
+  UNIQUE KEY uq_orders_payment_ref (payment_ref),
   KEY idx_orders_status (status, placed_at),
   KEY idx_orders_placed (placed_at),
   KEY idx_orders_ack (acknowledged_at)
@@ -344,13 +352,13 @@ CREATE TABLE order_events (
     REFERENCES users (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ── Stripe webhook idempotency ─────────────────────────────────────────────
+-- ── Webhook idempotency ────────────────────────────────────────────────────
 --
--- Stripe retries webhooks and can deliver the same event more than once.
--- Inserting the event id first, and treating a duplicate-key error as "already
--- handled", makes replays harmless.
+-- Every gateway retries webhooks and can deliver the same event more than
+-- once. Inserting the event id first, and treating a duplicate-key error as
+-- "already handled", makes replays harmless.
 
-CREATE TABLE stripe_events (
+CREATE TABLE payment_events (
   event_id     VARCHAR(255) NOT NULL,
   event_type   VARCHAR(80)  NOT NULL,
   processed_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,

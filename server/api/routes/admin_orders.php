@@ -35,6 +35,19 @@ function admin_list_orders(): void
     switch ($scope) {
         case 'active':
             $where[] = "status NOT IN ('complete','cancelled')";
+            /*
+             * The kitchen's working list is orders that have been paid for.
+             *
+             * An order sits at 'pending' or 'awaiting' from the moment it is
+             * created until PayPal confirms the capture, which for an
+             * abandoned checkout is forever. Those must not reach the pass, or
+             * the shop cooks food nobody bought. 'unpaid' is the cash-on-
+             * collection case and is genuinely workable, so it stays.
+             *
+             * Nothing is lost: scope=all still shows them, flagged, for anyone
+             * chasing a payment that half-happened.
+             */
+            $where[] = "payment_status IN ('paid','unpaid')";
             break;
         case 'today':
             // Shop-local day, not UTC: at 00:30 BST the kitchen still means
@@ -78,7 +91,9 @@ function admin_list_orders(): void
     // The "new order" chime keys off this rather than re-scanning client-side.
     $unacknowledged = db_one(
         "SELECT COUNT(*) AS n FROM orders
-          WHERE acknowledged_at IS NULL AND status NOT IN ('cancelled','complete')"
+          WHERE acknowledged_at IS NULL
+            AND status NOT IN ('cancelled','complete')
+            AND payment_status IN ('paid','unpaid')"
     );
 
     json_response([

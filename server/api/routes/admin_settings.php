@@ -258,7 +258,7 @@ function admin_test_email(): void
             'subtotal' => 948, 'discount' => 0, 'delivery' => 249,
             'surcharge' => 44, 'total' => 1241,
         ],
-        'payment'   => ['status' => 'paid', 'method' => 'stripe', 'paidAt' => gmdate('c')],
+        'payment'   => ['status' => 'paid', 'method' => 'paypal', 'paidAt' => gmdate('c')],
     ];
 
     $sent = send_new_order_notification($sample, 'TEST');
