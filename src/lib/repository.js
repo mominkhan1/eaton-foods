@@ -145,23 +145,21 @@ export function applyPromo(promo) {
 // ── Hydration ──────────────────────────────────────────────────────────────
 
 /**
- * Load everything the app needs in one pass.
+ * Load everything the app needs, in one request.
  *
  * `admin` asks for the unpublished rows too: the storefront must never see a
  * hidden item, but the panel that manages them has to.
  *
- * The four requests go out together rather than in sequence — they do not
- * depend on each other, and on a phone connection four round trips one after
- * another is the difference between a fast first paint and a slow one.
+ * One request rather than four parallel ones. They could go out together, but
+ * on shared hosting each is a separate PHP process and a fresh MySQL
+ * connection — the cost is in the four connections, not in waiting for them
+ * one after another.
  */
 export async function hydrate({ admin = false, signal } = {}) {
   try {
-    const [catalog, hours, banners, promo] = await Promise.all([
-      admin ? api.admin.getCatalog({ signal }) : api.getCatalog({ signal }),
-      api.getHours({ signal }),
-      admin ? api.admin.getBanners({ signal }) : api.getBanners({ signal }),
-      api.getPromo({ signal }),
-    ]);
+    const { catalog, hours, banners, promo } = admin
+      ? await api.admin.getBootstrap({ signal })
+      : await api.getBootstrap({ signal });
 
     applyCatalog(catalog);
     applyHours(hours);

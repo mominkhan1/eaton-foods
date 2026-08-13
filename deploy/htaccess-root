@@ -35,6 +35,17 @@ RewriteRule ^ index.html [L]
     ExpiresByType font/woff2 "access plus 1 year"
     ExpiresByType image/png "access plus 1 month"
     ExpiresByType image/webp "access plus 1 month"
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/svg+xml "access plus 1 month"
+</IfModule>
+
+# Hashed assets are immutable — a given URL can never change contents, so the
+# browser should not revalidate them at all. `Expires` alone still produces a
+# conditional request on a hard refresh; `immutable` stops even that.
+<IfModule mod_headers.c>
+    <FilesMatch "\.(js|css|woff2)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
 </IfModule>
 
 # index.html must NOT be cached, or customers keep running the previous build
@@ -45,6 +56,18 @@ RewriteRule ^ index.html [L]
     </IfModule>
 </Files>
 
+# Compression.
+#
+# `text/javascript` matters more than it looks: that is what Apache's own
+# mime.types has mapped .js to since 2.4.x, so a list naming only
+# `application/javascript` silently compresses nothing — the bundle goes out
+# at its full size while the config appears to cover it.
 <IfModule mod_deflate.c>
-    AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json
+    AddOutputFilterByType DEFLATE \
+        text/html text/css text/plain text/xml \
+        text/javascript application/javascript application/x-javascript \
+        application/json image/svg+xml application/manifest+json
+
+    # woff2 is already compressed; running deflate over it burns CPU on every
+    # request to add a few bytes.
 </IfModule>

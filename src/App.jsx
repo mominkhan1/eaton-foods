@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { CatalogProvider } from './context/CatalogContext';
 import { OrderProvider } from './context/OrderContext';
@@ -15,13 +16,23 @@ import Menu from './pages/Menu';
 import Checkout from './pages/Checkout';
 import OrderStatus from './pages/OrderStatus';
 import TrackOrder from './pages/TrackOrder';
-import { AdminAuthProvider } from './admin/AdminAuth';
-import AdminLayout from './admin/AdminLayout';
-import AdminOrders from './admin/AdminOrders';
-import AdminMenu from './admin/AdminMenu';
-import AdminBanners from './admin/AdminBanners';
-import AdminHours from './admin/AdminHours';
-import AdminReports from './admin/AdminReports';
+/*
+ * The admin panel is loaded on demand.
+ *
+ * It is roughly half the application — the menu editor, the banner editor
+ * with its live preview, the kitchen screen and the revenue chart — and no
+ * customer ever opens it. Bundling it with the storefront made every visitor
+ * download the shop's back office before they could look at a burger.
+ */
+const AdminAuthProvider = lazy(() =>
+  import('./admin/AdminAuth').then((m) => ({ default: m.AdminAuthProvider })),
+);
+const AdminLayout = lazy(() => import('./admin/AdminLayout'));
+const AdminOrders = lazy(() => import('./admin/AdminOrders'));
+const AdminMenu = lazy(() => import('./admin/AdminMenu'));
+const AdminBanners = lazy(() => import('./admin/AdminBanners'));
+const AdminHours = lazy(() => import('./admin/AdminHours'));
+const AdminReports = lazy(() => import('./admin/AdminReports'));
 
 export default function App() {
   // The admin panel needs the unpublished rows too, so the catalog is loaded
@@ -47,17 +58,19 @@ function AppShell({ isAdmin }) {
     // No decorative effects in the admin panel — it is a working tool, and
     // the kitchen screen should spend nothing on animation.
     return (
-      <AdminAuthProvider>
-        <Routes>
-          <Route path="/admin" element={<AdminLayout />}>
-            <Route index element={<AdminOrders />} />
-            <Route path="menu" element={<AdminMenu />} />
-            <Route path="banners" element={<AdminBanners />} />
-            <Route path="hours" element={<AdminHours />} />
-            <Route path="reports" element={<AdminReports />} />
-          </Route>
-        </Routes>
-      </AdminAuthProvider>
+      <Suspense fallback={<FullPageMessage>Loading the admin panel…</FullPageMessage>}>
+        <AdminAuthProvider>
+          <Routes>
+            <Route path="/admin" element={<AdminLayout />}>
+              <Route index element={<AdminOrders />} />
+              <Route path="menu" element={<AdminMenu />} />
+              <Route path="banners" element={<AdminBanners />} />
+              <Route path="hours" element={<AdminHours />} />
+              <Route path="reports" element={<AdminReports />} />
+            </Route>
+          </Routes>
+        </AdminAuthProvider>
+      </Suspense>
     );
   }
 

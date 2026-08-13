@@ -7,7 +7,7 @@ import { getHours, setManualStatus, MANUAL_STATUS, subscribe } from '../lib/repo
 import { isStoreOpen, isScheduledOpen, formatTime, nextOpenAt } from '../lib/hours';
 import { useOrderFeed } from './useOrderFeed';
 import { armAudio } from '../lib/alerts';
-import mark from '../assets/eat-on-mark.png';
+import mark from '../assets/eat-on-mark.webp';
 
 /*
  * `permission` mirrors what the API enforces for each area. Hiding a tab is a

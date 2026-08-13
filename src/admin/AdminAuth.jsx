@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { storeConfig } from '../data/store';
-import mark from '../assets/eat-on-mark.png';
+import mark from '../assets/eat-on-mark.webp';
 
 /**
  * Admin authentication.

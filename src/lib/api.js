@@ -120,6 +120,14 @@ const del = (path, options) => request(path, { ...options, method: 'DELETE' });
 // ── Public ─────────────────────────────────────────────────────────────────
 
 export const api = {
+  /**
+   * Catalog, hours, banners and promo in one request.
+   *
+   * The storefront needs all four before it can paint, and on shared hosting
+   * each request is its own PHP process and MySQL connection.
+   */
+  getBootstrap: (options) => get('/bootstrap', options),
+
   /** Store config, order setup, promo and the Stripe publishable key. */
   getConfig: (options) => get('/config', options),
   getCatalog: (options) => get('/catalog', options),
@@ -159,6 +167,9 @@ export const api = {
       patch(`/admin/orders/${encodeURIComponent(reference)}/status`, { status }),
     acknowledgeOrder: (reference) =>
       post(`/admin/orders/${encodeURIComponent(reference)}/acknowledge`),
+
+    /** As `getBootstrap`, plus the unpublished rows the panel manages. */
+    getBootstrap: (options) => get('/admin/bootstrap', options),
 
     /** Includes unpublished items, unlike the public catalog. */
     getCatalog: (options) => get('/admin/catalog', options),

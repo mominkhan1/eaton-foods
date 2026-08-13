@@ -1,6 +1,6 @@
 import { storeConfig, orderSetup } from '../data/store';
 import { openingHoursSummary } from '../lib/hours';
-import logo from '../assets/eat-on-logo.png';
+import logo from '../assets/eat-on-logo.webp';
 
 export default function Footer() {
   const hours = openingHoursSummary();

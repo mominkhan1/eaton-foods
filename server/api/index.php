@@ -67,6 +67,24 @@ route('GET', '/config', function (): void {
     json_response(public_config());
 });
 
+/*
+ * Everything the storefront needs to render, in one request.
+ *
+ * The four collections below are also served individually, but the browser
+ * wants all of them before it can paint anything. On shared hosting each
+ * request is a separate PHP process and a fresh MySQL connection, so four
+ * round trips is four times the connection cost and four times the latency
+ * before a customer sees the menu.
+ */
+route('GET', '/bootstrap', function (): void {
+    json_response([
+        'catalog' => get_catalog(false),
+        'hours'   => get_hours(),
+        'banners' => get_banners(false),
+        'promo'   => get_promo(),
+    ]);
+});
+
 route('GET', '/catalog', function (): void {
     json_response(get_catalog(false));
 });
@@ -144,6 +162,28 @@ route('POST', '/admin/orders/{reference}/acknowledge', function (array $params):
 });
 
 // ── Admin: catalog ─────────────────────────────────────────────────────────
+
+/*
+ * The same bundle as /bootstrap, including the unpublished rows the panel has
+ * to manage.
+ *
+ * Authentication only, deliberately — not `menu.manage`. A kitchen tablet
+ * signed in as `staff` has no menu permission, but the orders screen still
+ * needs the catalog to show each line's photo, including for an item that has
+ * been hidden since the order was placed. Refusing here would leave the
+ * kitchen looking at a screen full of fallback icons and a permanent error.
+ * An unpublished item is the shop's own menu, not sensitive data, and every
+ * endpoint that *changes* it still demands `menu.manage`.
+ */
+route('GET', '/admin/bootstrap', function (): void {
+    require_auth();
+    json_response([
+        'catalog' => get_catalog(true),
+        'hours'   => get_hours(),
+        'banners' => get_banners(true),
+        'promo'   => get_promo(),
+    ]);
+});
 
 route('GET', '/admin/catalog', function (): void {
     require_permission('menu.manage');

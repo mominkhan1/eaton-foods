@@ -2,7 +2,7 @@ import { Link, NavLink } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { storeConfig } from '../data/store';
 import { formatPence } from '../lib/money';
-import logo from '../assets/eat-on-logo.png';
+import logo from '../assets/eat-on-logo.webp';
 
 export default function Header() {
   const { totals, openCart } = useCart();
