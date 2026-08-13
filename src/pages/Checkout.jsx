@@ -113,7 +113,9 @@ export default function Checkout() {
 
     rememberOrder(order);
     clear();
-    navigate(`/order/${order.reference}`, { replace: true });
+    // `replace`, so Back does not land on a checkout for a basket that has
+    // already been paid for and cleared.
+    navigate(`/thank-you/${order.reference}`, { replace: true });
   }
 
   const whenLabel =

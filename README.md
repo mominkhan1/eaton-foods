@@ -44,8 +44,13 @@ patterns that make modals reset unpredictably.
 5. **Basket drawer** — line editing, promo code, free-delivery progress,
    minimum-order enforcement, collection-only conflict detection.
 6. **Checkout** — customer details, address/timing recap, card or Google Pay.
-7. **Confirmation + tracking** — one screen at `/order/:reference`, with a
-   status timeline that advances on a clock.
+7. **Thank you** — `/thank-you/:reference`, reached once, straight from
+   checkout. The reference sits on a tear-off docket, with when it will be
+   ready, what happens next, and where it is going.
+8. **Tracking** — `/order/:reference`, the durable link. It is what the
+   confirmation email points at and what **Track order** resolves to, so
+   opening it days later gives the status rather than the celebration. The
+   timeline advances when the kitchen advances it, not on a clock.
 
 ## Admin panel — `/admin`
 

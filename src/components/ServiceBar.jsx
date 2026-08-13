@@ -79,17 +79,22 @@ export default function ServiceBar() {
                 active={orderType === ORDER_TYPE.PICKUP}
                 onClick={() => switchTo(ORDER_TYPE.PICKUP)}
               >
+                <StorefrontIcon className="h-4 w-4" />
                 {/* "Collect" on phones — both are ordinary takeaway wording,
-                    and the shorter one buys the room to stay on one line. */}
-                <StorefrontIcon className="h-4 w-4" /> Collect
-                <span className="hidden sm:inline">ion</span>
+                    and the shorter one buys the room to stay on one line. The
+                    two halves must not be separated by a newline: JSX turns
+                    that into a space and the button reads "Collect ion". */}
+                <span>
+                  Collect<span className="hidden sm:inline">ion</span>
+                </span>
               </SegmentButton>
               {orderSetup.isDeliveryOn && (
                 <SegmentButton
                   active={orderType === ORDER_TYPE.DELIVERY}
                   onClick={() => switchTo(ORDER_TYPE.DELIVERY)}
                 >
-                  <ScooterIcon className="h-4 w-4" /> Delivery
+                  <ScooterIcon className="h-4 w-4" />
+                  <span>Delivery</span>
                 </SegmentButton>
               )}
             </div>

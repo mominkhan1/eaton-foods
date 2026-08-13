@@ -15,6 +15,7 @@ import Home from './pages/Home';
 import Menu from './pages/Menu';
 import Checkout from './pages/Checkout';
 import OrderStatus from './pages/OrderStatus';
+import ThankYou from './pages/ThankYou';
 import TrackOrder from './pages/TrackOrder';
 /*
  * The admin panel is loaded on demand.
@@ -107,6 +108,7 @@ function AppShell({ isAdmin }) {
             <Route path="/menu" element={<Menu />} />
             <Route path="/checkout" element={<Checkout />} />
             <Route path="/order/:reference" element={<OrderStatus />} />
+            <Route path="/thank-you/:reference" element={<ThankYou />} />
             <Route path="/track" element={<TrackOrder />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

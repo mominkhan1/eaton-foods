@@ -209,6 +209,61 @@
 }
 
 /*
+ * The confirmation seal, and the one confetti burst behind it.
+ *
+ * Both run once, on transform and opacity only, so they composite on the GPU
+ * and cost no main-thread work on the phone someone just ordered from.
+ */
+@keyframes seal-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4) rotate(-14deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08) rotate(4deg);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-seal-pop {
+  animation: seal-pop 620ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+}
+
+@keyframes confetti-burst {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.4);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--dx), var(--dy), 0) scale(1) rotate(var(--spin));
+  }
+}
+
+.confetti-piece {
+  animation: confetti-burst 1500ms cubic-bezier(0.15, 0.6, 0.35, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-seal-pop {
+    animation: none;
+  }
+
+  /* Not merely stilled — a frozen scatter of squares around the tick reads as
+     a rendering fault rather than a celebration. */
+  .confetti-piece {
+    display: none;
+  }
+}
+
+/*
  * Drifting embers. Composited on the GPU (transform + opacity only), so this
  * costs no main-thread work and the browser throttles it when hidden.
  */
