@@ -281,7 +281,9 @@ CREATE TABLE orders (
   -- Only 'paid' and 'unpaid' reach the kitchen's working list.
   payment_status    ENUM('unpaid','pending','awaiting','paid','failed','refunded')
                     NOT NULL DEFAULT 'pending',
-  payment_method    VARCHAR(40)   NULL,       -- 'paypal' | 'cash'
+  -- 'paypal' | 'googlepay' | 'applepay' | 'cash'. The three online ones are
+  -- all settled through PayPal; this records which sheet the customer used.
+  payment_method    VARCHAR(40)   NULL,
   -- Gateway-neutral: a PayPal capture id today. Naming a provider here is why
   -- changing gateway used to mean changing the schema.
   payment_ref       VARCHAR(255)  NULL,

@@ -141,9 +141,14 @@ export const api = {
   /**
    * Start a PayPal payment for an order, returning the PayPal order id for
    * the SDK to open. The amount comes from the stored order, never from here.
+   *
+   * `source` is which sheet is about to open — 'paypal', 'googlepay' or
+   * 'applepay'. It decides whether the order is pinned to the PayPal wallet or
+   * left open for a wallet to attach its own token, and the server refuses any
+   * value the shop has not switched on.
    */
-  createPaypalOrder: (reference, options) =>
-    post(`/orders/${encodeURIComponent(reference)}/paypal-order`, undefined, options),
+  createPaypalOrder: (reference, source = 'paypal', options) =>
+    post(`/orders/${encodeURIComponent(reference)}/paypal-order`, { source }, options),
 
   /**
    * Take the money. The server checks the captured amount and currency

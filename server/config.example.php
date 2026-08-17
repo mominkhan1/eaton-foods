@@ -67,6 +67,21 @@ return [
         'webhook_id' => 'CHANGE_ME',
         // Must match the currency the shop prices in.
         'currency'   => 'GBP',
+
+        // ── Wallets ────────────────────────────────────────────────────────
+        // Google Pay and Apple Pay, taken through the same PayPal account and
+        // settled into the same balance. Both are OFF until the account can
+        // actually take them, because a wallet button that fails when pressed
+        // costs more orders than one that was never shown.
+        //
+        // Each needs turning on at developer.paypal.com → Apps & Credentials →
+        // your app → Features, and Apple Pay also needs the domain registered
+        // and its association file served. Full steps: DEPLOYMENT.md §8.6.
+        //
+        // Neither works over plain http, so both stay dark in local
+        // development regardless of what is set here.
+        'google_pay' => false,
+        'apple_pay'  => false,
     ],
 
     // ── Email ──────────────────────────────────────────────────────────────

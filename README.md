@@ -47,13 +47,24 @@ patterns that make modals reset unpredictably.
 7. **Thank you** — `/thank-you/:reference`, reached once, straight from
    checkout. The reference sits on a tear-off docket, with when it will be
    ready, what happens next, and where it is going.
-8. **Payment** — PayPal Standard Checkout. The amount is attached to the
-   PayPal order server-side from the stored total, and the captured figure is
+8. **Payment** — PayPal, plus **Google Pay and Apple Pay** where the shop has
+   turned them on. All three are the same PayPal order underneath: the amount
+   is attached server-side from the stored total, and the captured figure is
    checked against it before anything is marked paid. Customers without a
    PayPal account pay by card on PayPal's own page, so no card details reach
    this site. **The kitchen is only told about an order once the payment
    clears** — otherwise every abandoned checkout would put a ticket on the
-   pass. Setup and go-live: [server/DEPLOYMENT.md](server/DEPLOYMENT.md) §8.
+   pass. Setup and go-live: [server/DEPLOYMENT.md](server/DEPLOYMENT.md) §8;
+   the two wallets are §8.6 and ship switched off.
+
+   The wallets differ from the PayPal button in one way worth knowing: the
+   PayPal order is created **pinned** to the PayPal wallet
+   (`payment_source.paypal`), which is what produces the no-popup PAY_NOW
+   flow — and a pinned order cannot then accept a Google Pay or Apple Pay
+   token. So those two create the order plain and let the wallet attach its own
+   source at confirm time. The payment source is therefore part of the
+   idempotency key, or backing out of one button and tapping another hands you
+   back the first one's order.
 9. **Tracking** — `/order/:reference`, the durable link. It is what the
    confirmation email points at and what **Track order** resolves to, so
    opening it days later gives the status rather than the celebration. The
@@ -227,6 +238,7 @@ The reference platform models a menu as **category → item → sizes[]**, where
 | Delivery geofence, postcodes | [src/lib/geo.js](src/lib/geo.js) |
 | Totals, surcharges, promo | [src/lib/pricing.js](src/lib/pricing.js) |
 | Order placement, status | [src/lib/orders.js](src/lib/orders.js) |
+| Payment SDK loading, wallet eligibility | [src/lib/paypalSdk.js](src/lib/paypalSdk.js) |
 | Report windows, weekly/monthly roll-up | [src/lib/reports.js](src/lib/reports.js) |
 | Chime, tab flash, notifications | [src/lib/alerts.js](src/lib/alerts.js) |
 | Photo upload, downscaling, URL lookup | [src/lib/images.js](src/lib/images.js) |

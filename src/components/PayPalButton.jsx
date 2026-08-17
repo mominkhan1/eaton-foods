@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { loadPayPalSdk } from '../lib/paypalSdk';
 
 /**
  * The PayPal pay button.
@@ -15,53 +16,11 @@ import { useEffect, useRef, useState } from 'react';
  * and reports back what happened.
  */
 
-let sdkPromise = null;
-
-/**
- * Load the SDK once per page.
- *
- * Cached in a module promise rather than component state: two mounts (a
- * remount, or React's development double-render) must not put two copies of
- * the script in the document.
- */
-function loadPayPalSdk({ clientId, currency }) {
-  if (sdkPromise) return sdkPromise;
-
-  sdkPromise = new Promise((resolve, reject) => {
-    if (window.paypal) {
-      resolve(window.paypal);
-      return;
-    }
-
-    const params = new URLSearchParams({
-      'client-id': clientId,
-      currency,
-      intent: 'capture',
-      components: 'buttons',
-      // Card is what a customer without a PayPal account uses; the other two
-      // are credit products that do not belong on a £20 takeaway.
-      'disable-funding': 'paylater,credit',
-    });
-
-    const script = document.createElement('script');
-    script.src = `https://www.paypal.com/sdk/js?${params}`;
-    script.async = true;
-    script.onload = () => (window.paypal ? resolve(window.paypal) : reject(new Error('sdk-empty')));
-    script.onerror = () => {
-      // Let a later attempt retry rather than caching the failure forever.
-      sdkPromise = null;
-      reject(new Error('sdk-blocked'));
-    };
-
-    document.head.appendChild(script);
-  });
-
-  return sdkPromise;
-}
-
 export default function PayPalButton({
   clientId,
   currency = 'GBP',
+  /** Every component the page needs, since the SDK loads once. */
+  components,
   /** Return false to stop the payment opening — used for form validation. */
   onBeforePay,
   /** Must resolve to a PayPal order id. */
@@ -87,7 +46,7 @@ export default function PayPalButton({
     let cancelled = false;
     let instance = null;
 
-    loadPayPalSdk({ clientId, currency })
+    loadPayPalSdk({ clientId, currency, components })
       .then((paypal) => {
         if (cancelled || !containerRef.current) return;
 

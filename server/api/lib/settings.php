@@ -162,6 +162,12 @@ function public_config(): array
             'currency'   => paypal_currency(),
             'mode'       => paypal_is_live() ? 'live' : 'sandbox',
             'configured' => paypal_is_configured(),
+            // Which wallets to offer alongside the PayPal button. The browser
+            // asks the device whether it can actually pay with one before it
+            // shows anything, so these only say the shop has set it up — not
+            // that this customer will see it.
+            'googlePay'  => paypal_wallet_enabled('googlepay'),
+            'applePay'   => paypal_wallet_enabled('applepay'),
         ],
         'uploadsUrl' => config('uploads_url', '/uploads'),
     ];

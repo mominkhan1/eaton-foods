@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { useOrder } from '../context/OrderContext';
@@ -13,6 +13,9 @@ import { formatDateTime, formatTime } from '../lib/hours';
 import { placeOrder, rememberOrder } from '../lib/orders';
 import { api } from '../lib/api';
 import PayPalButton from '../components/PayPalButton';
+import GooglePayButton from '../components/GooglePayButton';
+import ApplePayButton from '../components/ApplePayButton';
+import { paypalComponents } from '../lib/paypalSdk';
 import { DrumstickIcon, CardIcon } from '../components/Icons';
 
 const CUSTOMER_KEY = 'eaton.customer.v1';
@@ -51,6 +54,32 @@ export default function Checkout() {
       .catch(() => setPaypal({ configured: false }));
     return () => controller.abort();
   }, []);
+
+  /*
+   * Which SDK components every button on this page will need.
+   *
+   * Decided here rather than inside each button because the PayPal SDK loads
+   * exactly once and its component list is fixed by that one load — see
+   * src/lib/paypalSdk.js. Asking for a wallet the shop has not switched on just
+   * makes the script bigger, so it is driven off the server's config.
+   */
+  const sdkComponents = useMemo(
+    () => paypalComponents({ googlePay: paypal?.googlePay, applePay: paypal?.applePay }),
+    [paypal?.googlePay, paypal?.applePay],
+  );
+
+  /*
+   * What to name in the payment blurb.
+   *
+   * This is what the SHOP has switched on, not what this device can do — the
+   * buttons themselves ask the device and stay hidden if the answer is no,
+   * which is why the copy says "if your device offers it" rather than
+   * promising anything.
+   */
+  const walletsOffered =
+    [paypal?.applePay && 'Apple Pay', paypal?.googlePay && 'Google Pay']
+      .filter(Boolean)
+      .join(' or ') || null;
 
   /*
    * The order this payment is for.
@@ -146,11 +175,11 @@ export default function Checkout() {
     return true;
   }
 
-  async function onCreatePaypalOrder() {
+  async function onCreatePaypalOrder(source = 'paypal') {
     setSubmitting(true);
     try {
       const reference = await ensureOrder();
-      const { paypalOrderId } = await api.createPaypalOrder(reference);
+      const { paypalOrderId } = await api.createPaypalOrder(reference, source);
       return paypalOrderId;
     } catch (error) {
       setSubmitting(false);
@@ -168,9 +197,20 @@ export default function Checkout() {
     }
   }
 
-  async function onPaymentApproved(paypalOrderId) {
+  /**
+   * Take the money.
+   *
+   * Split from the navigation below because the wallets need the two halves
+   * apart: Google Pay and Apple Pay both hold their sheet open until the
+   * capture has resolved, and report the outcome INTO the sheet. Leaving the
+   * page from in here would tear the checkout down underneath an open sheet.
+   *
+   * Throws on failure, having already set the message, so a wallet can fail
+   * its own sheet and the PayPal button can simply stop.
+   */
+  async function capturePayment(paypalOrderId) {
     const reference = placed.current?.reference;
-    if (!reference) return;
+    if (!reference) throw new Error('no-order');
 
     try {
       await api.capturePaypalOrder(reference, paypalOrderId);
@@ -183,14 +223,45 @@ export default function Checkout() {
             reference +
             '.',
       });
-      return;
+      throw error;
     }
+  }
+
+  /** Paid. Clear the basket and go, once any wallet sheet has closed. */
+  function completePayment() {
+    const reference = placed.current?.reference;
+    if (!reference) return;
 
     rememberOrder({ reference, placedAt: new Date().toISOString(), totals });
     clear();
     // `replace`, so Back does not land on a checkout for a basket that has
     // already been paid for and cleared.
     navigate(`/thank-you/${reference}`, { replace: true });
+  }
+
+  async function onPaymentApproved(paypalOrderId) {
+    try {
+      await capturePayment(paypalOrderId);
+    } catch {
+      // capturePayment has already put the reason on screen.
+      return;
+    }
+    completePayment();
+  }
+
+  /** What a wallet reports when its own sheet could not finish. */
+  function onWalletError(error) {
+    setSubmitting(false);
+    // A capture failure has already written the specific reason; only fill in
+    // a message when something earlier went wrong and left none.
+    setErrors((current) =>
+      current.submit
+        ? current
+        : {
+            submit:
+              error?.message ?? 'The payment could not be completed. Nothing has been charged.',
+          },
+    );
   }
 
   const whenLabel =
@@ -311,9 +382,20 @@ export default function Checkout() {
           <section className="card p-5">
             <h2 className="text-xl text-ink-950">Payment</h2>
             <p className="mt-1 text-sm text-ink-500">
-              Paid securely through PayPal. You do not need a PayPal account —
-              choose <strong className="text-ink-800">Debit or Credit Card</strong> in the
-              window that opens.
+              {walletsOffered ? (
+                <>
+                  Pay with <strong className="text-ink-800">{walletsOffered}</strong> if your
+                  device offers it, or through PayPal. You do not need a PayPal account —
+                  choose <strong className="text-ink-800">Debit or Credit Card</strong> in the
+                  window that opens.
+                </>
+              ) : (
+                <>
+                  Paid securely through PayPal. You do not need a PayPal account —
+                  choose <strong className="text-ink-800">Debit or Credit Card</strong> in the
+                  window that opens.
+                </>
+              )}
             </p>
 
             <div className="mt-4 flex items-start gap-3 rounded-xl border border-surface-300 px-4 py-3">
@@ -389,24 +471,61 @@ export default function Checkout() {
             {paypal === null ? (
               <p className="py-3 text-center text-sm text-ink-500">Loading payment options…</p>
             ) : paypal.configured ? (
-              /* Remounted if the total changes, so the button can never be
-                 holding a PayPal order for a basket that has since been
-                 edited in the drawer. */
-              <PayPalButton
-                key={totals.total}
-                clientId={paypal.clientId}
-                currency={paypal.currency}
-                onBeforePay={onBeforePay}
-                createOrder={onCreatePaypalOrder}
-                onApprove={onPaymentApproved}
-                onCancel={() => setSubmitting(false)}
-                onError={() => {
-                  setSubmitting(false);
-                  setErrors({
-                    submit: 'The payment could not be completed. Nothing has been charged.',
-                  });
-                }}
-              />
+              /* Remounted if the total changes, so no button can be holding a
+                 PayPal order for a basket that has since been edited in the
+                 drawer. */
+              <div key={totals.total} className="space-y-2">
+                {/* The wallets come first: a customer who has one is one tap
+                    from done, and each renders nothing at all unless this
+                    device can actually pay with it. */}
+                {paypal.applePay && (
+                  <ApplePayButton
+                    clientId={paypal.clientId}
+                    currency={paypal.currency}
+                    components={sdkComponents}
+                    totalPence={totals.total}
+                    merchantName={storeConfig.name}
+                    onBeforePay={onBeforePay}
+                    createOrder={() => onCreatePaypalOrder('applepay')}
+                    captureOrder={capturePayment}
+                    onComplete={completePayment}
+                    onCancel={() => setSubmitting(false)}
+                    onError={onWalletError}
+                  />
+                )}
+
+                {paypal.googlePay && (
+                  <GooglePayButton
+                    clientId={paypal.clientId}
+                    currency={paypal.currency}
+                    components={sdkComponents}
+                    mode={paypal.mode}
+                    totalPence={totals.total}
+                    onBeforePay={onBeforePay}
+                    createOrder={() => onCreatePaypalOrder('googlepay')}
+                    captureOrder={capturePayment}
+                    onComplete={completePayment}
+                    onCancel={() => setSubmitting(false)}
+                    onError={onWalletError}
+                  />
+                )}
+
+                <PayPalButton
+                  clientId={paypal.clientId}
+                  currency={paypal.currency}
+                  components={sdkComponents}
+                  onBeforePay={onBeforePay}
+                  createOrder={() => onCreatePaypalOrder('paypal')}
+                  onApprove={onPaymentApproved}
+                  onCancel={() => setSubmitting(false)}
+                  onError={() => {
+                    setSubmitting(false);
+                    setErrors({
+                      submit: 'The payment could not be completed. Nothing has been charged.',
+                    });
+                  }}
+                />
+              </div>
             ) : (
               <p className="rounded-xl bg-chilli-500/10 px-4 py-3 text-sm text-chilli-500">
                 Online payment is not set up yet, so orders cannot be placed here. Please call
@@ -421,7 +540,7 @@ export default function Checkout() {
 
           {submitting && (
             <p className="mt-3 text-center text-xs text-ink-500" role="status">
-              Talking to PayPal — do not close this page.
+              Taking payment — do not close this page.
             </p>
           )}
 

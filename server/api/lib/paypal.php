@@ -50,6 +50,50 @@ function paypal_is_configured(): bool
 }
 
 /**
+ * The payment sources the checkout can open, in the order they are offered.
+ *
+ * 'paypal' is the wallet-and-card flow that has always been here. The other
+ * two are the same Orders API underneath — same create, same capture, same
+ * amount check — differing only in what the browser puts in front of the
+ * customer and how the payment source gets attached to the order.
+ */
+const PAYPAL_SOURCES = ['applepay', 'googlepay', 'paypal'];
+
+/**
+ * Is this wallet switched on?
+ *
+ * Both default to OFF, and for good reason: Google Pay and Apple Pay through
+ * PayPal need Advanced Checkout enabled on the merchant account, and Apple Pay
+ * additionally needs the domain registered with Apple. Turning them on in the
+ * config before that is done produces a button that fails when pressed, which
+ * is worse than no button. Switch each on only once its dashboard setup is
+ * finished — DEPLOYMENT.md §8.6.
+ */
+function paypal_wallet_enabled(string $source): bool
+{
+    if (!paypal_is_configured()) {
+        return false;
+    }
+
+    return match ($source) {
+        'googlepay' => (bool) config('paypal.google_pay', false),
+        'applepay'  => (bool) config('paypal.apple_pay', false),
+        'paypal'    => true,
+        default     => false,
+    };
+}
+
+/** What to call a payment source in front of a person. */
+function paypal_source_label(string $source): string
+{
+    return match ($source) {
+        'googlepay' => 'Google Pay',
+        'applepay'  => 'Apple Pay',
+        default     => 'PayPal',
+    };
+}
+
+/**
  * An OAuth2 access token.
  *
  * Held for the life of the request only. A token lasts about nine hours, but

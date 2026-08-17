@@ -328,10 +328,114 @@ Only once all five pass:
    paypal.com → Activity. The refund should flip the order to `refunded`
    within a minute, which proves the live webhook is wired.
 
+### 8.6 Google Pay and Apple Pay (optional)
+
+Both are taken **through the same PayPal account** and land in the same
+balance — same order, same capture, same webhook. Nothing new to reconcile.
+They exist because a customer who has one is a single tap from paying, on the
+phone where most takeaway orders are placed.
+
+Both ship **switched off**:
+
+```php
+'google_pay' => false,
+'apple_pay'  => false,
+```
+
+Leave them off until the steps below are done for that wallet. A button that
+fails when pressed loses more orders than a button that was never there.
+
+**Neither works on `http://localhost`.** Both require https, so this section
+can only be done against the live domain.
+
+#### Before either will work
+
+Google Pay and Apple Pay through PayPal need **Advanced Checkout** on the
+merchant account — not the Standard Checkout the PayPal button uses. In the UK
+this is an application, not a switch, and it is not instant.
+
+1. developer.paypal.com → **Apps & Credentials** → your app → **Features**.
+2. If **Advanced Credit and Debit Card Payments** is not already enabled, apply
+   for it and wait for approval before going further.
+3. On the same Features list, tick **Google Pay** and/or **Apple Pay**.
+
+Do this in sandbox first, exactly as with the card flow, and again on the live
+app afterwards — the two are separate accounts and enabling one does nothing
+for the other.
+
+#### Google Pay
+
+Nothing further. Once the feature is enabled, set `'google_pay' => true` and
+rebuild the front end.
+
+The button appears only if the customer's browser can actually pay — Chrome
+with a card saved to their Google account. Everyone else sees the PayPal button
+alone and is told nothing about a feature they were not offered.
+
+#### Apple Pay
+
+Apple Pay additionally needs **the domain proved to be yours**, and this is the
+step that fails if skipped — merchant validation is rejected and the sheet dies
+on open.
+
+1. developer.paypal.com → your app → **Apple Pay** → **Manage domains**.
+2. Add `eatonfoods.co.uk`, and every other hostname the shop is reachable on.
+   `www.` and the bare domain are **different domains** to Apple; register both
+   or the one you missed silently fails.
+3. Download the **domain association file** from that screen, and commit it to
+   the repo at:
+
+   ```
+   public/.well-known/apple-developer-merchantid-domain-association
+   ```
+
+   No file extension. Vite copies everything under `public/` into the build, so
+   it lands at the web root and **redeploys itself on every push** — verified,
+   dotted directory and all. Putting it straight onto the server by hand works
+   too, but then it is one manual step away from being lost the next time
+   anyone rebuilds the site.
+
+   It is a public verification file, not a secret. It is meant to be readable
+   by anyone; committing it is correct.
+
+4. Confirm
+   `https://yourdomain.co.uk/.well-known/apple-developer-merchantid-domain-association`
+   returns the file rather than the React app.
+
+   > The SPA rewrite serves `index.html` for unknown paths, which is the
+   > commonest way this file goes missing on an otherwise correct setup. The
+   > root `.htaccess` here is fine — `deploy/htaccess-root` matches real files
+   > and directories with `-f`/`-d` and stops before the catch-all — but check
+   > the URL anyway, because nothing else tells you it is wrong.
+
+5. Then set `'apple_pay' => true` and push.
+
+The button appears only in Safari, on a device with a card in Wallet.
+
+#### Testing them
+
+Neither can be tested from a desktop Chrome-on-Windows dev machine, which is
+the awkward part:
+
+| Wallet | Needs |
+|---|---|
+| Google Pay | Chrome, signed in, with a card saved. Sandbox uses Google's TEST environment, where a real card is not charged. |
+| Apple Pay | Safari on a Mac or iPhone, with a card in Wallet, on the registered https domain. |
+
+Place one real order through each after go-live, for the cheapest item, and
+refund it — the same proof the card flow gets in 8.5. Check the admin panel
+shows the order and that the payment reads as the wallet used, not as PayPal.
+
 ### What the customer sees if something is wrong
 
 - **PayPal not configured** — the checkout says online payment is unavailable
   and shows the shop's phone number, rather than a button that fails.
+- **A wallet is switched on but the device cannot use it** — nothing is shown.
+  The wallet buttons render only when the browser confirms it can pay, so a
+  customer never sees an option that would fail on them.
+- **A wallet is switched on but the PayPal account is not approved for it** —
+  also nothing, and a note in the browser console. The PayPal button still
+  works, so orders keep coming in while you sort it out.
 - **An ad blocker eats the SDK** — the payment box explains that and suggests
   disabling it. This is common enough to be worth knowing about.
 - **Payment declined** — the basket is kept so they can try another method.

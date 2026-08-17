@@ -25,8 +25,9 @@ function create_paypal_order(string $reference): void
         fail('payment_unavailable', 'Online payment is not available right now.', 503);
     }
 
-    $order = load_payable_order($reference);
-    $pence = to_pence($order['total']);
+    $source = requested_payment_source();
+    $order  = load_payable_order($reference);
+    $pence  = to_pence($order['total']);
 
     if ($pence <= 0) {
         fail('invalid_total', 'That order has nothing to pay.', 422);
@@ -34,7 +35,7 @@ function create_paypal_order(string $reference): void
 
     $currency = paypal_currency();
 
-    $result = paypal_request('POST', '/v2/checkout/orders', [
+    $payload = [
         'intent' => 'CAPTURE',
         'purchase_units' => [[
             // Ours, echoed back on the capture and in the webhook, so a payment
@@ -47,7 +48,20 @@ function create_paypal_order(string $reference): void
                 'value'         => paypal_amount($pence),
             ],
         ]],
-        'payment_source' => [
+    ];
+
+    /*
+     * ONLY the PayPal wallet names its payment source up front.
+     *
+     * Naming `payment_source.paypal` pins the order to that one source, which
+     * is what produces the popup-free PAY_NOW experience. Google Pay and Apple
+     * Pay attach their own source later, from the browser, when the SDK calls
+     * confirmOrder() with the wallet's payment token — and PayPal rejects that
+     * outright on an order already pinned to the PayPal wallet. So for those
+     * two the order is created plain and the wallet fills the gap.
+     */
+    if ($source === 'paypal') {
+        $payload['payment_source'] = [
             'paypal' => [
                 'experience_context' => [
                     // No shipping step: this is a takeaway, and the address was
@@ -61,16 +75,33 @@ function create_paypal_order(string $reference): void
                     'cancel_url'          => rtrim((string) config('site_url'), '/') . '/checkout',
                 ],
             ],
-        ],
-    ], 'create-' . $order['reference'] . '-' . $pence);
+        ];
+    }
+
+    /*
+     * The source is part of the idempotency key, not just the amount.
+     *
+     * PayPal returns the ORIGINAL order for a repeated PayPal-Request-Id. A
+     * customer who opens the PayPal button, backs out, and then taps Google Pay
+     * would otherwise be handed back the order pinned to the PayPal wallet, and
+     * the Google Pay confirm would fail with nothing on screen to explain it.
+     */
+    $result = paypal_request(
+        'POST',
+        '/v2/checkout/orders',
+        $payload,
+        'create-' . $order['reference'] . '-' . $source . '-' . $pence
+    );
 
     if ($result['status'] >= 400 || empty($result['body']['id'])) {
         fail('paypal_unavailable', 'We could not start the payment. Please try again.', 502);
     }
 
+    // Recorded now so the kitchen and the webhook can both tell how it was
+    // paid, even if the customer never comes back to complete the capture.
     db_run(
-        "UPDATE orders SET payment_status = 'awaiting', payment_method = 'paypal' WHERE id = ?",
-        [$order['id']]
+        "UPDATE orders SET payment_status = 'awaiting', payment_method = ? WHERE id = ?",
+        [$source, $order['id']]
     );
 
     json_response([
@@ -78,7 +109,31 @@ function create_paypal_order(string $reference): void
         'reference'     => $order['reference'],
         'amount'        => paypal_amount($pence),
         'currency'      => $currency,
+        'source'        => $source,
     ]);
+}
+
+/**
+ * Which payment source the browser is asking to open.
+ *
+ * Allowlisted rather than taken at face value, and checked against what the
+ * shop has actually switched on — an unconfigured wallet must not be openable
+ * by posting its name, or a customer reaches a sheet the account cannot settle.
+ * Absent means the PayPal wallet, so an older cached copy of the app keeps
+ * working unchanged.
+ */
+function requested_payment_source(): string
+{
+    $source = strtolower(trim((string) (body()['source'] ?? 'paypal')));
+
+    if ($source === '') {
+        $source = 'paypal';
+    }
+    if (!in_array($source, PAYPAL_SOURCES, true) || !paypal_wallet_enabled($source)) {
+        fail('unsupported_source', 'That payment method is not available.', 422);
+    }
+
+    return $source;
 }
 
 /**
@@ -201,17 +256,30 @@ function mark_order_paid_by_paypal(array $order, string $captureId): void
         return;
     }
 
-    db_transaction(static function () use ($order, $captureId): void {
+    /*
+     * Keep the wallet the customer actually used.
+     *
+     * It was written when the order was created, and this used to overwrite it
+     * with a flat 'paypal' — which would report every Google Pay and Apple Pay
+     * payment as a PayPal one on the kitchen screen and in the reports. Anything
+     * unrecognised falls back, so a row from before this existed still reads
+     * sensibly.
+     */
+    $method = in_array((string) ($order['payment_method'] ?? ''), PAYPAL_SOURCES, true)
+        ? (string) $order['payment_method']
+        : 'paypal';
+
+    db_transaction(static function () use ($order, $captureId, $method): void {
         db_run(
             "UPDATE orders
-                SET payment_status = 'paid', payment_method = 'paypal',
+                SET payment_status = 'paid', payment_method = ?,
                     payment_ref = ?, paid_at = ?
               WHERE id = ? AND payment_status <> 'paid'",
-            [$captureId, utc_now(), $order['id']]
+            [$method, $captureId, utc_now(), $order['id']]
         );
         db_run(
             'INSERT INTO order_events (order_id, event_type, detail) VALUES (?, ?, ?)',
-            [$order['id'], 'payment', 'Paid via PayPal (' . $captureId . ')']
+            [$order['id'], 'payment', 'Paid via ' . paypal_source_label($method) . ' (' . $captureId . ')']
         );
     });
 
