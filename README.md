@@ -1,7 +1,7 @@
-# Eat On — Welwyn Garden City
+# Eat On — Hatfield
 
-Online ordering for **Eat On** (The Food Table Ltd), The Howard Centre,
-Howardsgate, Welwyn Garden City AL8 6HA. Halal.
+Online ordering for **Eat On** (The Food Table Ltd), The Galleria,
+Comet Way, Hatfield, Hertfordshire AL10 0XR. Halal.
 React + Vite + Tailwind v4, with a PHP/MySQL backend.
 
 The menu in [src/data/menu.js](src/data/menu.js) is transcribed from the

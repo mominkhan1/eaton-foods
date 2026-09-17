@@ -52,9 +52,9 @@ function default_store_config(): array
         'legalName'    => 'The Food Table Ltd',
         'tagline'      => 'Good Food Good Mood',
         'isHalal'      => true,
-        'address'      => 'The Howard Centre, Howardsgate, Welwyn Garden City',
-        'postcode'     => 'AL8 6HA',
-        'city'         => 'Welwyn Garden City',
+        'address'      => 'The Galleria, Comet Way, Hatfield',
+        'postcode'     => 'AL10 0XR',
+        'city'         => 'Hatfield',
         'country'      => 'United Kingdom',
         // PLACEHOLDER — replace with the shop's real number before launch.
         'phoneDisplay' => '01707 555142',
@@ -63,8 +63,8 @@ function default_store_config(): array
         'timeZone'     => 'Europe/London',
         'currency'     => '£',
         'currencyCode' => 'GBP',
-        // Geofence centre, approximate to the Howard Centre.
-        'location'     => ['lat' => 51.8014, 'lng' => -0.2045],
+        // Geofence centre, approximate to The Galleria.
+        'location'     => ['lat' => 51.7612, 'lng' => -0.2406],
     ];
 }
 
@@ -87,7 +87,7 @@ function default_order_setup(): array
         'useRadiusBasedDeliveryArea'  => false,
         'deliveryRadiusKm'            => 5,
         'deliveryAreaLabel'           => 'Welwyn Garden City, Welwyn and Hatfield',
-        // Roughly 5km around the Howard Centre: Welwyn Garden City (AL7/AL8),
+        // Roughly 5km around The Galleria: Welwyn Garden City (AL7/AL8),
         // Welwyn and Digswell (AL6), Hatfield (AL9/AL10).
         'servedPostcodeDistricts'     => ['AL6', 'AL7', 'AL8', 'AL9', 'AL10'],
         'deliveryFee'                 => 2.49,

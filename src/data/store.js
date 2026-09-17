@@ -16,9 +16,9 @@ export const storeConfig = {
   legalName: 'The Food Table Ltd',
   tagline: 'Good Food Good Mood',
   isHalal: true,
-  address: 'The Howard Centre, Howardsgate, Welwyn Garden City',
-  postcode: 'AL8 6HA',
-  city: 'Welwyn Garden City',
+  address: 'The Galleria, Comet Way, Hatfield',
+  postcode: 'AL10 0XR',
+  city: 'Hatfield',
   country: 'United Kingdom',
   // PLACEHOLDER — replace with the shop's real number before launch.
   phoneDisplay: '01707 555142',
@@ -27,9 +27,9 @@ export const storeConfig = {
   timeZone: 'Europe/London',
   currency: '£',
   currencyCode: 'GBP',
-  // Geofence centre — the shop itself. Approximate to the Howard Centre;
+  // Geofence centre — the shop itself. Approximate to The Galleria;
   // worth confirming against a map pin before relying on the radius check.
-  location: { lat: 51.8014, lng: -0.2045 },
+  location: { lat: 51.7612, lng: -0.2406 },
 };
 
 export const orderSetup = {
@@ -67,7 +67,7 @@ export const orderSetup = {
   // Districts we actually drive to. A radius circle alone will spill into
   // places we don't serve, so the postcode is checked too.
   //
-  // These are the districts within roughly 5km of the Howard Centre:
+  // These are the districts within roughly 5km of The Galleria:
   // Welwyn Garden City itself (AL7/AL8), Welwyn and Digswell (AL6), and
   // Hatfield (AL9/AL10). Widen or trim this to match what the drivers will
   // actually do — it is a business decision, not a geographic one.

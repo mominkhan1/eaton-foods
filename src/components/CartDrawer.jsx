@@ -193,7 +193,7 @@ export default function CartDrawer() {
             <p className="mt-2 text-center text-xs text-ink-500">
               {orderType === 'delivery'
                 ? 'Delivering to your address'
-                : 'Collection from the Howard Centre'}
+                : 'Collection from The Galleria'}
             </p>
           </footer>
         )}
